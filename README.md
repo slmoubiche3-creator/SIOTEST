@@ -26,7 +26,7 @@ npm run reset      # delete the local database to start again
 | **1. Receive and store** | A webhook (`POST /api/messages`) that contact forms, email parsers and live-chat tools can call, plus CSV import (button in the UI, or automatic on first start). Messages are stored in SQLite. Import is idempotent: re-importing the same file creates no duplicates. |
 | **2. Analyse** | Each message gets a topic, an owning team, an urgency (critical / high / normal / low), a language, a one-line summary, "what the customer needs", and the **reasons** behind each decision. |
 | **3. Team work** | A queue per team, sorted by urgency, then deadline, then waiting time. Agents assign, change status (New, In progress, Waiting for customer, Resolved), move to another team, change urgency, and add internal notes. Everything is logged in a history. Critical items alert the team's on-call and lead in the app (live) and in Slack. |
-| **4. Extras** | Conversations instead of messages, incident detection, deadlines, reply-time targets, safety guards. Details below. |
+| **4. Extras** | Conversations instead of messages, incident detection, deadlines, reply-time targets, safety guards, and a guided tour of the app. Details below. |
 
 ### The extras, and the problem each one solves
 
@@ -46,6 +46,10 @@ The backlog is small but every message hides a trap. I built the extras from wha
 | Spam and "test test please ignore" | Kept low and out of the headline numbers. |
 
 Reply-time targets (SLA): critical 1h, high 4h, normal 24h, low 72h. The clock stops when an agent marks "Waiting for customer" and restarts when the customer writes again.
+
+**Guided tour.** On a first visit, a 16-step tour walks through every feature: key numbers, the queue, team views, the Stripe incident, a grouped conversation (reasons, messages, actions, history), safety flags, alerts, search and the analysis engine. It finds its own examples in the data, so it also works after importing other messages, and the **▶ Tour** button replays it.
+
+![Guided tour](docs/tour.png)
 
 ## How analysis works
 
@@ -86,7 +90,7 @@ The triage logic itself (grouping, deadlines, incidents, guardrails, the agent s
 - **Accuracy** (`npm run eval`):
   - On the 30 backlog messages: 30/30 team, 30/30 urgency, 30/30 language. **This number is flattering**: I tuned the rules on these messages.
   - On **12 new messages written afterwards and never used for tuning** (`npm run eval -- data/holdout.csv`): team 10/12, urgency 7/12, language 11/12. This is the honest number for the rules engine on new wording, and the reason the AI engine exists. I left these misses unfixed on purpose so the measurement stays valid.
-- **In a real browser** (`scripts/e2e-ui.cjs`, Playwright): queue order, grouped conversation with deadline, assign and note, a live alert when a critical message arrives through the webhook, a message containing HTML is not executed, the incident view, and no horizontal scroll on a 390px phone screen.
+- **In a real browser** (`scripts/e2e-ui.cjs`, Playwright): the guided tour (all 16 steps on a computer, the team menu on a phone), queue order, grouped conversation with deadline, assign and note, a live alert when a critical message arrives through the webhook, a message containing HTML is not executed, the incident view, and no horizontal scroll on a 390px phone screen.
 
 ## What is not done yet
 

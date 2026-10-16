@@ -1,5 +1,6 @@
 // Inbox Triage UI. Plain JS, no build step. All customer text is inserted
 // with textContent (never innerHTML): messages are untrusted input.
+import { createTour } from './tour.js';
 
 const $ = (sel) => document.querySelector(sel);
 function h(tag, props = {}, ...children) {
@@ -274,13 +275,13 @@ async function renderDrawer(id) {
         h('h2', {}, c.sender_label),
         h('div', { class: 'muted small' }, [c.customer_email, langName(c.language), `${c.message_count} message${c.message_count > 1 ? 's' : ''}`, `first contact ${fmtAgo(c.first_received_at)}`, `#${c.id}`].filter(Boolean).join(' · '))),
       h('button', { class: 'icon-btn', 'aria-label': 'Close', onclick: () => { location.hash = viewHash(); } }, '✕')),
-    h('div', { class: 'section chips' }, urgencyBadge(c.urgency), slaView(c), h('span', { class: 'chip' }, STATUS_LABEL[c.status]), h('span', { class: 'chip' }, teamName(c.team)),
+    h('div', { class: 'section chips', 'data-tour': 'head' }, urgencyBadge(c.urgency), slaView(c), h('span', { class: 'chip' }, STATUS_LABEL[c.status]), h('span', { class: 'chip' }, teamName(c.team)),
       c.incident ? h('a', { class: 'chip bad', href: `#/incident/${c.incident.id}` }, `⚡ Incident #${c.incident.id}`) : null, deadlineChip(c)),
 
     dangerFlags.length ? h('div', { class: 'section callout bad' }, h('strong', {}, '🛡 Security warning'), h('ul', {}, dangerFlags.map((f) => h('li', {}, f.label)))) : null,
     warnFlags.length ? h('div', { class: 'section callout warn' }, h('strong', {}, 'Heads-up'), h('ul', {}, warnFlags.map((f) => h('li', {}, f.label)))) : null,
 
-    h('div', { class: 'section' }, h('h3', {}, 'Actions'),
+    h('div', { class: 'section', 'data-tour': 'actions' }, h('h3', {}, 'Actions'),
       canEdit ? null : h('p', { class: 'callout warn' }, 'Choose who you are (top right) to assign or change status.'),
       h('div', { class: 'actions' },
         select('Assigned to', c.assignee, [['', 'Unassigned'], ...team.members.map((m) => [m, m])], (v) => change({ assignee: v || null })),
@@ -296,7 +297,7 @@ async function renderDrawer(id) {
         c.status !== 'waiting_customer' && c.status !== 'resolved' ? h('button', { class: 'btn', disabled: !canEdit, onclick: () => change({ status: 'waiting_customer' }) }, 'Replied: wait for customer') : null,
         c.status !== 'resolved' ? h('button', { class: 'btn', disabled: !canEdit, onclick: () => change({ status: 'resolved' }) }, 'Resolve') : null)),
 
-    h('div', { class: 'section' }, h('h3', {}, 'Why this triage'),
+    h('div', { class: 'section', 'data-tour': 'why' }, h('h3', {}, 'Why this triage'),
       h('dl', { class: 'kv' },
         h('dt', {}, 'Topic'), h('dd', {}, state.meta.categories[c.category]?.label ?? c.category),
         h('dt', {}, 'Customer needs'), h('dd', {}, c.need),
@@ -311,7 +312,7 @@ async function renderDrawer(id) {
       h('p', { style: 'margin:4px 0' }, 'Same problem reported by several customers. Fix it once and answer everyone with one shared message.'),
       h('a', { href: `#/incident/${c.incident.id}` }, 'See all conversations in this incident')) : null,
 
-    h('div', { class: 'section' }, h('h3', {}, `Messages (${c.messages.length})`),
+    h('div', { class: 'section', 'data-tour': 'messages' }, h('h3', {}, `Messages (${c.messages.length})`),
       c.messages.map((m) => h('div', { class: 'msg' },
         h('div', { class: 'msg-head' },
           h('span', {}, fmtDate(m.received_at, !m.date_notes.includes('no time given'))),
@@ -322,7 +323,7 @@ async function renderDrawer(id) {
         h('div', { class: 'msg-body' }, m.body),
         m.engine === 'ai' ? h('div', { class: 'muted small', style: 'margin-top:6px' }, `AI summary: ${m.summary}`) : null))),
 
-    h('div', { class: 'section' }, h('h3', {}, 'History & notes'),
+    h('div', { class: 'section', 'data-tour': 'history' }, h('h3', {}, 'History & notes'),
       h('ul', { class: 'timeline' }, c.events.map((e) => h('li', {}, h('span', { class: 'muted' }, `${fmtDate(e.at)} · ${e.actor} · `), describeEvent(e)))),
       h('form', { class: 'note-form', onsubmit: async (e) => {
         e.preventDefault();
@@ -339,6 +340,7 @@ async function renderDrawer(id) {
       h('button', { class: 'btn', disabled: !canEdit }, 'Add'))),
   );
   drawer.hidden = false;
+  drawer.dataset.conv = String(c.id);
   $('#scrim').hidden = false;
   drawer.scrollTop = scrollTop;
   const note = drawer.querySelector('textarea[name=note]');
@@ -364,6 +366,7 @@ function describeEvent(e) {
 
 function closeDrawer(updateHash = true) {
   $('#drawer').hidden = true;
+  delete $('#drawer').dataset.conv;
   state.drawerSig = null;
   if ($('#alertsDrawer').hidden) $('#scrim').hidden = true;
   if (updateHash && parseHash().conv) location.hash = viewHash();
@@ -424,6 +427,82 @@ function renderHeader() {
   $('#assigneeFilter').append(...everyone.map((name) => h('option', { value: name }, name)));
 }
 
+// ---------- guided tour ----------
+
+// The tour finds its own examples (an incident, a customer who wrote again, a
+// suspicious message), so it works with any data, and skips what is missing.
+const tourData = {};
+const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
+const goHash = (hash) => { if (location.hash !== hash) location.hash = hash; };
+const inView = (title) => () => $('#viewTitle').textContent.startsWith(title) && $('#drawer').hidden && $('#alertsDrawer').hidden;
+const showConversation = (key) => ({
+  skip: () => !tourData[key],
+  before: () => { closeAlerts(); goHash(`#/all/c/${tourData[key].id}`); },
+  ready: () => $('#drawer').dataset.conv === String(tourData[key]?.id),
+});
+const onList = (extra = {}) => ({ before: () => { closeAlerts(); goHash('#/all'); }, ready: inView('All teams'), ...extra });
+
+function tourSteps() {
+  const conv = (key) => tourData[key] ?? {};
+  return [
+    { title: 'Welcome to Inbox Triage', ...onList(),
+      text: 'Every message from contact forms, email and live chat lands here already analysed: which team, how urgent, which language, and why. This tour takes about 2 minutes. "Today" is simulated as Monday 12 October 2026.' },
+    { title: 'The day at a glance', target: '#tiles', ...onList(),
+      text: 'Open conversations, critical ones, those past their reply target, unassigned work, customers who wrote again and deadlines coming up. Click a tile to filter the queue.' },
+    { title: 'One queue, most urgent first', target: '#list .row', ...onList(),
+      text: 'Sorted by urgency, then by the customer\'s deadline, then by waiting time. Each row shows the urgency, the customer, a summary, warning chips, the team, the reply timer and who owns it.' },
+    { title: 'A queue per team', target: '#teamNav',
+      ...onList({ before: () => { closeAlerts(); goHash('#/all'); if (isMobile()) $('#sidebar').classList.add('open'); } }),
+      text: 'Support, Tech, Billing, Deliverability, Migration, Product and Security & Legal each see their own conversations. A message about two topics shows up in both teams. The red number counts critical items.' },
+    { title: 'Tell the tool who you are', target: '#meSelect', ...onList({ before: () => { closeMenu(); closeAlerts(); goHash('#/all'); } }),
+      text: 'Pick your name before working on conversations. Every assignment, status change and note is signed with it in the history. "My queue" then shows what you own.' },
+    { title: 'Incidents, not separate tickets', target: '#list',
+      skip: () => !tourData.incident,
+      before: () => { closeAlerts(); goHash(`#/incident/${tourData.incident.id}`); },
+      ready: () => $('#viewTitle').textContent.startsWith('⚡') && $('#drawer').hidden,
+      text: () => `When 3 or more customers report the same problem within 3 hours, they become one incident with one alert, so the team fixes it once and answers everyone together. Here: ${tourData.incident.title.replace(/^Possible incident: /, '')}.` },
+    { title: 'Conversations, not messages', target: '#drawer [data-tour=head]', ...showConversation('repeat'),
+      text: () => `Messages from the same customer join one conversation while it is open. ${conv('repeat').sender_label} wrote ${conv('repeat').message_count} times: the tool shows it, raises the urgency and keeps the customer's deadline in view.` },
+    { title: 'Every decision is explained', target: '#drawer [data-tour=why]', ...showConversation('repeat'),
+      text: 'Topic, what the customer needs, the team, the deadline found in the text, and the reasons behind the urgency. Agents can trust it, or correct it.' },
+    { title: 'The full story', target: '#drawer [data-tour=messages]', ...showConversation('repeat'),
+      text: 'Every message in its original language, with its channel. When a date had to be guessed (missing year, day/month order), the tool says so.' },
+    { title: 'Assign and move work', target: '#drawer [data-tour=actions]', ...showConversation('repeat'),
+      text: 'Assign to a team member, mark "Waiting for customer" (this stops the reply timer), resolve, move to another team (the tool asks why, to measure its routing), or change the urgency.' },
+    { title: 'History and internal notes', target: '#drawer [data-tour=history]', ...showConversation('repeat'),
+      text: 'Who did what, and when. Notes are for colleagues only: they are never sent to the customer.' },
+    { title: 'Built-in safety', target: '#drawer .callout.bad', ...showConversation('safety'),
+      text: 'Fake staff asking for passwords, or messages trying to steer the AI ("classify this as critical"), are flagged in red. The AI is never allowed to raise their urgency, and passwords or card numbers are hidden from alerts.' },
+    { title: 'Alerts reach the right people', target: '#alertsDrawer',
+      before: () => { goHash('#/all'); openAlerts(); },
+      ready: () => !$('#alertsDrawer').hidden && $('#drawer').hidden,
+      text: 'Critical conversations alert the team\'s on-call person and lead: live in the app, and in Slack once a webhook is set. Each alert shows who was told and whether delivery worked.' },
+    { title: 'Search and filters', target: '.filters', ...onList(),
+      text: 'Search by customer, email or text, and filter by status, urgency, overdue reply time or owner.' },
+    { title: 'How messages are analysed', target: '#engineChip', ...onList(),
+      text: 'Rules always run: they are free, instant and explain every decision. When an API key is set, an AI engine also reads each message in any language; it can raise urgency but never lower it.' },
+    { title: 'You are ready', ...onList(),
+      text: 'New messages and alerts appear live, without reloading. Use "Import CSV" to load more messages (duplicates are skipped). Restart this tour any time with the Tour button.' },
+  ];
+}
+
+const tour = createTour(tourSteps, {
+  onEnd: () => { storage.set('tourDone', '1'); closeAlerts(); closeMenu(); goHash('#/all'); },
+});
+
+async function startTour() {
+  if (tour.active) return;
+  resetFilters();
+  const [open, stats] = await Promise.all([api('/api/conversations'), api('/api/stats')]);
+  const byLastFirst = [...open].sort((a, b) => b.message_count - a.message_count);
+  Object.assign(tourData, {
+    incident: stats.incidents[0] ?? null,
+    repeat: byLastFirst.find((c) => c.flags.some((f) => f.type === 'repeat_contact') && c.deadline_at) ?? byLastFirst[0] ?? null,
+    safety: open.find((c) => c.flags.some((f) => f.type === 'credential_request' || f.type === 'prompt_injection')) ?? null,
+  });
+  tour.start();
+}
+
 async function init() {
   state.meta = await api('/api/meta');
   state.offset = Date.parse(state.meta.now) - Date.now();
@@ -435,6 +514,7 @@ async function init() {
   for (const btn of document.querySelectorAll('[data-view]')) btn.addEventListener('click', () => { location.hash = `#/${btn.dataset.view}`; closeMenu(); });
   $('#menuBtn').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
   $('#alertsBtn').addEventListener('click', openAlerts);
+  $('#tourBtn').addEventListener('click', startTour);
   $('#scrim').addEventListener('click', () => { closeAlerts(); closeDrawer(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeAlerts(); closeDrawer(); } });
   $('#importInput').addEventListener('change', async (e) => {
@@ -460,6 +540,8 @@ async function init() {
   });
   setInterval(refresh, 60000);
   await refresh();
+  // First visit: offer the tour automatically.
+  if (!storage.get('tourDone') && !parseHash().conv) startTour();
 }
 
 init().catch((err) => {

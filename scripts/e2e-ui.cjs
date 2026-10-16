@@ -10,8 +10,29 @@ const assert = (ok, msg) => { if (!ok) { console.error(`FAIL: ${msg}`); process.
 
 (async () => {
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  // Guided tour: starts by itself on a first visit and walks through every step.
   const errors = [];
+  const fresh = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  fresh.on('pageerror', (e) => errors.push(e.message));
+  await fresh.goto(`${URL_}/`);
+  await fresh.waitForSelector('.tour-pop:not(.loading)', { timeout: 8000 });
+  const total = Number((await fresh.textContent('.tour-count')).match(/of (\d+)/)[1]);
+  const titles = [];
+  for (let i = 0; i < total; i++) {
+    await fresh.waitForFunction((n) => document.querySelector('.tour-count')?.textContent.startsWith(`Step ${n} `) && !document.querySelector('.tour-pop.loading'), i + 1);
+    titles.push(await fresh.textContent('#tourTitle'));
+    if (OUT && /Conversations, not messages/.test(titles.at(-1))) { await fresh.waitForTimeout(400); await fresh.screenshot({ path: `${OUT}/tour.png` }); }
+    const box = await fresh.$eval('.tour-highlight', (el) => getComputedStyle(el).display);
+    if (i > 0 && i < total - 1 && box === 'none') errors.push(`tour step "${titles.at(-1)}" has nothing highlighted`);
+    await fresh.click('.tour-next');
+  }
+  await fresh.waitForSelector('.tour-pop', { state: 'detached' });
+  assert(total >= 15 && titles.includes('Built-in safety') && titles.includes('Incidents, not separate tickets'), `guided tour shows all ${total} steps`);
+  assert(await fresh.evaluate(() => localStorage.getItem('triage.tourDone') === '1'), 'tour is not shown again after finishing');
+  await fresh.close();
+
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await page.addInitScript(() => localStorage.setItem('triage.tourDone', '1'));
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('dialog', (d) => d.accept('test reason'));
@@ -57,7 +78,18 @@ const assert = (ok, msg) => { if (!ok) { console.error(`FAIL: ${msg}`); process.
   if (OUT) await page.screenshot({ path: `${OUT}/alerts.png` });
 
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  mobile.on('pageerror', (e) => errors.push(e.message));
   await mobile.goto(URL_);
+  // Tour on a phone: the team list lives in the side menu.
+  await mobile.waitForSelector('.tour-pop:not(.loading)', { timeout: 8000 });
+  for (let i = 1; i <= 3; i++) {
+    await mobile.waitForFunction((n) => document.querySelector('.tour-count')?.textContent.startsWith(`Step ${n} `) && !document.querySelector('.tour-pop.loading'), i);
+    await mobile.click('.tour-next');
+  }
+  await mobile.waitForFunction(() => document.querySelector('#tourTitle')?.textContent === 'A queue per team' && !document.querySelector('.tour-pop.loading'));
+  assert(await mobile.evaluate(() => document.querySelector('#sidebar').classList.contains('open')), 'on a phone the tour opens the team menu');
+  await mobile.keyboard.press('Escape');
+  await mobile.waitForSelector('.tour-pop', { state: 'detached' });
   await mobile.waitForSelector('.row');
   assert((await mobile.evaluate(() => document.documentElement.scrollWidth)) <= 390, 'no horizontal scroll on a phone');
   if (OUT) await mobile.screenshot({ path: `${OUT}/mobile.png` });
