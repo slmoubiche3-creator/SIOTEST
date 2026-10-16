@@ -21,7 +21,7 @@ const SCHEMA = {
   additionalProperties: false,
 };
 
-const SYSTEM_PROMPT = `You triage inbound customer messages for systeme.io, an all-in-one marketing platform (funnels, emails, courses, payments, affiliate program; plans: Free, Startup, Webinar, Unlimited).
+export const SYSTEM_PROMPT = `You triage inbound customer messages for systeme.io, an all-in-one marketing platform (funnels, emails, courses, payments, affiliate program; plans: Free, Startup, Webinar, Unlimited).
 
 Pick the category that matches the customer's main problem. Each category is owned by one team:
 ${Object.entries(CATEGORIES).map(([id, c]) => `- ${id}: ${c.label} (team: ${TEAMS.find((t) => t.id === c.team).name})`).join('\n')}
@@ -40,8 +40,7 @@ export function createAiEngine({ client, model }) {
   return {
     name: 'ai',
     model,
-    async classify({ body, subject, source }, { receivedAt, now }) {
-      const today = new Date(now).toISOString().slice(0, 10);
+    async classify(input, ctx) {
       const response = await client.beta.messages.create({
         model,
         max_tokens: 4000,
@@ -51,10 +50,7 @@ export function createAiEngine({ client, model }) {
         fallbacks: 'default',
         output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
         system: SYSTEM_PROMPT,
-        messages: [{
-          role: 'user',
-          content: `Today: ${today}\nReceived: ${receivedAt}\nChannel: ${source || 'unknown'}\n<customer_message>\n${subject ? `Subject: ${subject}\n` : ''}${body}\n</customer_message>`,
-        }],
+        messages: [{ role: 'user', content: buildUserContent(input, ctx) }],
       });
       if (response.stop_reason === 'refusal') throw new Error('The AI declined to classify this message');
       if (response.stop_reason === 'max_tokens') throw new Error('The AI response was cut off');
@@ -63,6 +59,12 @@ export function createAiEngine({ client, model }) {
       return validate(JSON.parse(text));
     },
   };
+}
+
+// The customer message is wrapped in tags so the model treats it as data.
+export function buildUserContent({ body, subject, source }, { receivedAt, now }) {
+  const today = new Date(now).toISOString().slice(0, 10);
+  return `Today: ${today}\nReceived: ${receivedAt}\nChannel: ${source || 'unknown'}\n<customer_message>\n${subject ? `Subject: ${subject}\n` : ''}${body}\n</customer_message>`;
 }
 
 // Structured outputs already enforce the schema; this is defence in depth

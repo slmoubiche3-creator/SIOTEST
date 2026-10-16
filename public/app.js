@@ -401,7 +401,7 @@ function closeAlerts() {
 
 // ---------- settings (AI engine) ----------
 
-const settings = { status: null, models: [], busy: false };
+const settings = { status: null, models: [], busy: false, tab: null };
 
 function renderEngineChip() {
   $('#engineChip').textContent = `Analysis: ${state.meta.engine}${state.meta.slack ? ' · Slack on' : ''}`;
@@ -410,6 +410,7 @@ function renderEngineChip() {
 async function openSettings() {
   try { settings.status = await api('/api/settings'); } catch (err) { toast('Settings unavailable', err.message); return; }
   settings.models = [];
+  settings.tab = settings.status.provider;
   renderSettings();
   $('#settingsDrawer').hidden = false;
   $('#scrim').hidden = false;
@@ -476,16 +477,41 @@ function renderSettings() {
       settings.models.map((m) => h('option', { value: m.id, selected: m.id === s.model }, m.name === m.id ? m.id : `${m.name} (${m.id})`))),
     h('button', { class: 'btn primary', disabled: busy }, busy ? 'Testing…' : 'Use this model'));
 
+  // n8n: the workflow calls any AI provider (OpenAI, Anthropic, Gemini...).
+  const n8nPart = [
+    h('p', { class: 'muted small' }, 'Your n8n workflow calls the AI provider of your choice (OpenAI, Anthropic, Gemini…) and answers in the format this tool expects. To change provider later, change the model node in n8n. Template to import: n8n/inbox-triage-ai-classifier.json.'),
+    h('form', { class: 'setting-form', onsubmit: (e) => {
+      e.preventDefault();
+      const url = e.target.elements.n8nUrl.value;
+      const secretInput = e.target.elements.n8nSecret;
+      const secret = secretInput.value;
+      secretInput.value = ''; // never keep the secret in the page
+      settingsAction(async () => { settings.status = await adminApi('/api/settings/n8n', { method: 'POST', body: JSON.stringify({ url, secret }) }); }, 'n8n connected: AI engine is on');
+    } },
+    h('input', { type: 'url', name: 'n8nUrl', required: true, value: s.n8n.url ?? '', placeholder: 'https://your-n8n/webhook/inbox-triage-classify', 'aria-label': 'n8n webhook URL (production)', disabled: busy }),
+    h('input', { type: 'password', name: 'n8nSecret', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'n8n secret', placeholder: s.n8n.secretSet ? 'Secret saved (hidden). Paste a new one to replace it' : `Secret of the ${s.n8n.header} credential`, disabled: busy }),
+    h('button', { class: 'btn primary', disabled: busy }, busy ? 'Testing…' : 'Connect and test')),
+    s.n8n.url ? h('button', { class: 'btn', style: 'margin-top:8px', disabled: busy, onclick: () => settingsAction(async () => {
+      settings.status = await adminApi('/api/settings/n8n', { method: 'DELETE' });
+    }, 'n8n disconnected') }, 'Disconnect n8n') : null,
+    h('p', { class: 'muted small' }, `Use the production webhook URL of the published workflow. The secret is the value of its Header Auth credential (${s.n8n.header}); it stays on this server and is never shown again. Before switching, the tool sends one short test message.`),
+  ];
+  const tab = settings.tab ?? s.provider;
+  const tabButton = (id, label) => h('button', { class: `btn${tab === id ? ' primary' : ''}`, 'aria-pressed': String(tab === id), onclick: () => { settings.tab = id; renderSettings(); } },
+    label, s.enabled && s.provider === id ? ' ✓' : '');
+
   fill($('#settingsDrawer'),
     h('div', { class: 'drawer-head' }, h('h2', {}, 'Settings'), h('button', { class: 'icon-btn', 'aria-label': 'Close', onclick: closeSettings }, '✕')),
     h('div', { class: 'section' }, h('h3', {}, 'AI engine'),
       h('div', { class: `callout ${s.enabled ? '' : 'warn'}` }, h('strong', {}, s.enabled ? `On: ${s.engine}` : 'Off: rules only'),
         s.forcedRulesOnly ? h('div', { class: 'small' }, 'Turned off on the server (ANALYZER=rules).') : null,
         s.error ? h('div', { class: 'small' }, s.error) : null),
-      h('p', { class: 'muted small' }, 'The rules always run. With an Anthropic API key and a model, an AI also reads every message, in any language, and writes an English summary. One key works for every model; models differ in price and speed.')),
+      h('p', { class: 'muted small' }, 'The rules always run. With an AI engine, every message is also read by an AI, in any language, with an English summary. Choose how the AI is reached:')),
     s.needsAdminToken ? h('div', { class: 'section' }, h('h3', {}, 'Admin token'),
       h('input', { type: 'password', name: 'admin', autocomplete: 'off', placeholder: 'Required to change settings', 'aria-label': 'Admin token' })) : null,
-    h('div', { class: 'section' }, h('p', { class: 'step-title' }, '1 · API key'),
+    h('div', { class: 'section chips', role: 'group', 'aria-label': 'AI provider' }, tabButton('anthropic', 'Anthropic API'), tabButton('n8n', 'n8n workflow (any AI)')),
+    tab === 'n8n' ? h('div', { class: 'section' }, h('p', { class: 'step-title' }, 'n8n webhook'), n8nPart) : null,
+    tab !== 'anthropic' ? null : h('div', { class: 'section' }, h('p', { class: 'step-title' }, '1 · API key'),
       s.keySource === 'environment' ? h('p', {}, 'Set on the server (ANTHROPIC_API_KEY). Change it there.')
         : [s.keySource === 'settings' ? h('p', {}, '✓ A key is saved. It is hidden and stored only on the server.') : null,
           keyForm,
@@ -494,8 +520,8 @@ function renderSettings() {
             settings.models = [];
           }, 'API key removed') }, 'Remove the key') : null],
       h('p', { class: 'muted small' }, 'The key is never shown again, never sent back to the browser and never saved in Git.')),
-    h('div', { class: 'section' }, h('p', { class: 'step-title' }, '2 · Model'), modelPart,
-      h('p', { class: 'muted small' }, 'The list comes from Anthropic for your key. Before switching, the tool sends one short test message to check that the model works.')),
+    tab !== 'anthropic' ? null : h('div', { class: 'section' }, h('p', { class: 'step-title' }, '2 · Model'), modelPart,
+      h('p', { class: 'muted small' }, 'One key works for every model; models differ in price and speed. The list comes from Anthropic for your key. Before switching, the tool sends one short test message to check that the model works.')),
   );
 }
 
@@ -582,7 +608,7 @@ function tourSteps() {
     { title: 'How messages are analysed', target: '#engineChip', ...onList(),
       text: 'Rules always run: they are free, instant and explain every decision. This label shows whether an AI engine also reads each message. The AI can raise urgency, never lower it.' },
     { title: 'Turn on the AI', target: '#settingsBtn', ...onList(),
-      text: 'In Settings, paste an Anthropic API key (it stays hidden on the server) and pick a model from the list Anthropic returns. One key works for every model.' },
+      text: 'In Settings, connect an AI: either an Anthropic API key and a model, or your n8n workflow, which can use any provider (OpenAI, Gemini…). Keys and secrets stay hidden on the server.' },
     { title: 'You are ready', ...onList(),
       text: 'New messages and alerts appear live, without reloading. Use "Import CSV" to load more messages (duplicates are skipped). Restart this tour any time with the Tour button.' },
   ];

@@ -1,0 +1,223 @@
+{
+  "name": "Inbox Triage – AI classifier",
+  "nodes": [
+    {
+      "name": "Receive Message From Inbox Triage",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "inbox-triage-classify",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "name": "Prepare Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        260,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "system",
+              "name": "system",
+              "value": "={{ $json.body?.system ?? $json.system ?? \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "prompt",
+              "name": "prompt",
+              "value": "={{ $json.body?.prompt ?? $json.prompt ?? \"\" }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false
+      }
+    },
+    {
+      "name": "Classify Message",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        520,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "={{ $json.system }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "OpenAI Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        460,
+        520
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini",
+          "cachedResultName": "gpt-5-mini"
+        },
+        "options": {
+          "reasoningEffort": "low",
+          "timeout": 60000,
+          "maxRetries": 2
+        }
+      }
+    },
+    {
+      "name": "Triage JSON Format",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        640,
+        520
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"category\": {\n      \"type\": \"string\",\n      \"description\": \"One category id from the list in the instructions\"\n    },\n    \"secondary_categories\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"urgency\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"low\",\n        \"normal\",\n        \"high\",\n        \"critical\"\n      ]\n    },\n    \"language\": {\n      \"type\": \"string\",\n      \"description\": \"ISO 639-1 code of the language the customer wrote in\"\n    },\n    \"summary_en\": {\n      \"type\": \"string\",\n      \"description\": \"One sentence, in English, of what happened\"\n    },\n    \"customer_need\": {\n      \"type\": \"string\",\n      \"description\": \"What the customer needs, in English, max 15 words\"\n    },\n    \"reasons\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"contains_instructions_to_ai\": {\n      \"type\": \"boolean\"\n    },\n    \"confidence\": {\n      \"type\": \"number\"\n    }\n  },\n  \"required\": [\n    \"category\",\n    \"secondary_categories\",\n    \"urgency\",\n    \"language\",\n    \"summary_en\",\n    \"customer_need\",\n    \"reasons\",\n    \"contains_instructions_to_ai\",\n    \"confidence\"\n  ],\n  \"additionalProperties\": false\n}"
+      }
+    },
+    {
+      "name": "Send Classification",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        820,
+        220
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.output) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "name": "Send AI Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        820,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error?.message ?? $json.error ?? \"The AI step failed\" }) }}",
+        "options": {
+          "responseCode": 502
+        }
+      }
+    },
+    {
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        -40
+      ],
+      "parameters": {
+        "content": "## Inbox Triage: AI classifier\nThe Inbox Triage tool sends each customer message here and gets back team, urgency, language and an English summary. The tool keeps its own rules and safety checks, so if this workflow fails it simply falls back to its rules.\n\n**Setup**\n1. Open the webhook node and create the Header Auth credential: name `X-Triage-Secret`, value = a long random secret.\n2. Publish the workflow.\n3. In Inbox Triage: Settings (gear) > n8n, paste the production webhook URL and the same secret.\n\n**Change AI provider**: replace the OpenAI Model node with Anthropic, Gemini, Mistral... The rest stays the same.",
+        "color": 4,
+        "width": 816,
+        "height": 224
+      }
+    }
+  ],
+  "connections": {
+    "Receive Message From Inbox Triage": {
+      "main": [
+        [
+          {
+            "node": "Prepare Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Prompt": {
+      "main": [
+        [
+          {
+            "node": "Classify Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Message": {
+      "main": [
+        [
+          {
+            "node": "Send Classification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send AI Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Classify Message",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Triage JSON Format": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Classify Message",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

@@ -12,7 +12,7 @@ Requires Node.js 22.13 or newer. Nothing else: no build step, no database server
 
 ```bash
 npm start          # http://localhost:3000, imports data/requests-backlog.csv on first run
-npm test           # 44 automated tests
+npm test           # 48 automated tests
 npm run eval       # accuracy against human labels (see "How I tested it")
 npm run reset      # delete the local database to start again
 ```
@@ -60,7 +60,11 @@ Two engines, one policy:
 1. **Rules engine** (always on). Multilingual keyword patterns (EN, FR, ES, DE, IT, PT, plus a few Arabic terms) for 20 topics, impact signals, deadline extraction and language detection. Free, instant, works offline, and every decision comes with a human-readable reason.
 2. **AI engine** (optional). Reads the message like a senior agent in any language and returns structured JSON (topic, urgency, English summary, customer need), using structured outputs (JSON schema), `low` effort, and Anthropic's server-side fallback when a request is declined.
 
-   **Turn it on in Settings (⚙):** paste an Anthropic API key, then pick a model. One key works for every model, so the list comes from Anthropic for that key (no model name is hard-coded) and the team chooses the price / speed / quality balance. Before switching, the tool sends one short test message; a model that fails is not switched on.
+   **Turn it on in Settings (⚙)**, with one of two providers:
+   - **Anthropic API**: paste an Anthropic API key, then pick a model.
+   - **n8n workflow (any AI)**: paste the URL and secret of the n8n workflow below; n8n then calls OpenAI, Anthropic, Gemini or any provider it supports.
+
+   Anthropic API details: paste an Anthropic API key, then pick a model. One key works for every model, so the list comes from Anthropic for that key (no model name is hard-coded) and the team chooses the price / speed / quality balance. Before switching, the tool sends one short test message; a model that fails is not switched on.
    - The key is stored on the server only (in the database file, which is not in Git). It is never sent back to the browser, and the field is cleared after saving.
    - Settings can only be changed from the computer running the tool, or with `ADMIN_TOKEN` once deployed.
    - A key in the environment (`ANTHROPIC_API_KEY`) always wins and cannot be changed from the UI.
@@ -84,16 +88,20 @@ The merge rules (`src/analyzer/index.js`):
 
 ### Where n8n fits
 
-n8n is great for the plumbing and I would use it around this tool, not instead of it:
+n8n is great for the plumbing, so the tool uses it where it helps and keeps the triage logic in code:
 
-- **In front**: Gmail / IMAP trigger, Crisp or Intercom webhooks, form tools → HTTP Request node → `POST /api/messages`.
-- **Behind**: the Slack alerts could be routed through n8n to add PagerDuty, SMS, or a FreeScout ticket.
+- **The AI call, through n8n (built).** `n8n/inbox-triage-ai-classifier.json` is a ready-to-import workflow: Webhook (Header Auth) → Prepare Prompt → Basic LLM Chain with a model node (OpenAI `gpt-5-mini` by default) and a Structured Output Parser → Respond to Webhook (or a clean `502` if the AI fails). The tool sends its own instructions and the message, n8n answers with the same JSON as the Anthropic engine, and the tool still applies its rules and guardrails. **Switching provider is done in n8n by swapping the model node**, with keys stored in n8n credentials.
 
-The triage logic itself (grouping, deadlines, incidents, guardrails, the agent screens) is easier to test, review and version as code: it is covered by 44 tests that run in about a second.
+  Setup: import the file in n8n, select your AI credential on the model node, create a Header Auth credential on the webhook (name `X-Triage-Secret`, value = a long random secret), publish, then paste the production webhook URL and the same secret in Inbox Triage → Settings → n8n workflow. The tool sends one test message before switching on.
+- **In front (next step)**: Gmail / IMAP trigger, Crisp or Intercom webhooks, form tools → HTTP Request node → `POST /api/messages`.
+- **Behind (next step)**: the Slack alerts could be routed through n8n to add PagerDuty, SMS, or a FreeScout ticket.
+
+The triage logic itself (grouping, deadlines, incidents, guardrails, the agent screens) is easier to test, review and version as code: it is covered by 48 tests that run in about a second.
 
 ## How I tested it
 
-- **Automated tests** (`npm test`, 44 tests): parsing of every date and sender format in the backlog, topic and urgency rules, deadlines, language detection, redaction, the AI engine with a fake client (request shape, guardrails, fallback on error / refusal / invalid output), the full import (26 conversations, 1 incident, 7 alerts), incident rules (3 different customers within 3 hours), the agent workflow, the HTTP API (token, validation, CSV upload, Slack delivery to a local fake webhook, static file safety), and the AI settings (bad key refused, key never returned, model tested before use, admin token, environment key wins, settings kept after a restart).
+- **Automated tests** (`npm test`, 48 tests): parsing of every date and sender format in the backlog, topic and urgency rules, deadlines, language detection, redaction, the AI engine with a fake client (request shape, guardrails, fallback on error / refusal / invalid output), the full import (26 conversations, 1 incident, 7 alerts), incident rules (3 different customers within 3 hours), the agent workflow, the HTTP API (token, validation, CSV upload, Slack delivery to a local fake webhook, static file safety), and the AI settings (bad key refused, key never returned, model tested before use, admin token, environment key wins, settings kept after a restart), and the n8n engine against a local fake n8n (secret header, `{ output }` format, AI failure in n8n falls back to the rules, wrong secret refused, secret never returned).
+- **In n8n**: the workflow was validated by n8n and run once with simulated data (no AI call), checking the prompt preparation and the JSON answer.
 - **Accuracy** (`npm run eval`):
   - On the 30 backlog messages: 30/30 team, 30/30 urgency, 30/30 language. **This number is flattering**: I tuned the rules on these messages.
   - On **12 new messages written afterwards and never used for tuning** (`npm run eval -- data/holdout.csv`): team 10/12, urgency 7/12, language 11/12. This is the honest number for the rules engine on new wording, and the reason the AI engine exists. I left these misses unfixed on purpose so the measurement stays valid.
@@ -103,7 +111,7 @@ The triage logic itself (grouping, deadlines, incidents, guardrails, the agent s
 
 Being direct about the limits:
 
-- **The AI engine has not been run against the live API.** I had no API key in my environment. It is tested with a fake client; the first real step is to add a key and a model in Settings, then run `npm run eval -- data/holdout.csv` (it uses the same settings).
+- **The AI engine has not been run against a live AI.** I had no API key in my environment, and its network policy blocked calls to the n8n instance. Both engines are tested with fakes; the first real step is to connect one in Settings, then run `npm run eval -- data/holdout.csv` (it uses the same settings).
 - **Rules miss new phrasing.** The holdout misses: a German "Spam-Ordner", "delete my account and all my data" (GDPR), a charge on a free plan, "I'm not the only one" (wider outage), and a spam offer for "B2B leads".
 - **No login.** The "I am" picker records who did what but is not authentication. In production it would sit behind the company SSO.
 - **Slack not tested against real Slack** (tested against a local fake webhook). No email/chat connectors yet: they would be n8n flows calling the webhook.
@@ -122,6 +130,8 @@ Being direct about the limits:
 | `BACKLOG_CSV` / `AUTO_IMPORT` | `data/requests-backlog.csv` / on | File imported on first start when the database is empty |
 | `ANTHROPIC_API_KEY` | none | API key for the AI engine (otherwise add it in Settings). `ANALYZER=rules` forces rules only |
 | `AI_MODEL` | none | Model id for the AI engine (otherwise choose it in Settings) |
+| `AI_PROVIDER` | `anthropic` | `anthropic` or `n8n` (otherwise chosen in Settings) |
+| `N8N_WEBHOOK_URL` / `N8N_WEBHOOK_SECRET` | none | n8n workflow URL and secret (otherwise set in Settings) |
 | `ADMIN_TOKEN` | none | If set, Settings changes require this token. If not set, Settings can only be changed from the computer running the tool |
 | `SLACK_WEBHOOK_URL` | none | Slack incoming webhook for alerts. `SLACK_WEBHOOK_URL_TECH`, `SLACK_WEBHOOK_URL_SECURITY_LEGAL`… override per team |
 | `INGEST_TOKEN` | none | If set, the public webhook `POST /api/messages` requires the `X-Ingest-Token` header (the agent UI and its API are meant to sit behind the company SSO) |
@@ -145,7 +155,7 @@ curl -X PATCH localhost:3000/api/conversations/22 -H 'content-type: application/
   -d '{"actor":"Julien","assignee":"Julien","status":"waiting_customer"}'
 ```
 
-Other endpoints: `GET /api/conversations/:id` (messages + history), `POST /api/conversations/:id/notes`, `GET /api/stats`, `GET /api/notifications`, `GET /api/meta`, `GET /api/events` (live updates, Server-Sent Events), and the AI settings: `GET /api/settings`, `POST /api/settings/key`, `DELETE /api/settings/key`, `GET /api/settings/models`, `POST /api/settings/model` (protected, see `ADMIN_TOKEN`).
+Other endpoints: `GET /api/conversations/:id` (messages + history), `POST /api/conversations/:id/notes`, `GET /api/stats`, `GET /api/notifications`, `GET /api/meta`, `GET /api/events` (live updates, Server-Sent Events), and the AI settings: `GET /api/settings`, `POST /api/settings/key`, `DELETE /api/settings/key`, `GET /api/settings/models`, `POST /api/settings/model`, `POST /api/settings/n8n`, `DELETE /api/settings/n8n` (protected, see `ADMIN_TOKEN`).
 
 ## Project layout
 
@@ -153,15 +163,16 @@ Other endpoints: `GET /api/conversations/:id` (messages + history), `POST /api/c
 src/
   server.js          HTTP API, live updates, static files, startup import
   triage.js          conversations, SLA, incidents, alerts, agent actions
-  analyzer/          rules.js, ai.js, index.js (merge + guardrails), deadline.js, language.js
+  analyzer/          rules.js, ai.js (Anthropic), n8n.js (AI via n8n), index.js (merge + guardrails), deadline.js, language.js
   taxonomy.js        teams, topics → team routing, urgency levels, SLA targets
   parse.js           CSV, dates, senders     notifier.js  in-app + Slack alerts
   db.js              SQLite schema           redact.js    secrets removal
-  ai-settings.js     API key + model chosen in Settings
+  ai-settings.js     AI provider settings (Anthropic key + model, or n8n URL + secret)
   cli/eval.js        accuracy report
 public/              the agent UI (plain HTML/CSS/JS), tour.js (guided tour)
 config/teams.json    people, on-call, Slack channels
 data/                requests-backlog.csv (the brief), holdout.csv (unseen test messages)
+n8n/                 inbox-triage-ai-classifier.json (n8n workflow to import)
 test/                node:test suites      scripts/e2e-ui.cjs  browser check
 ```
 

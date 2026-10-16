@@ -81,6 +81,8 @@ const assert = (ok, msg) => { if (!ok) { console.error(`FAIL: ${msg}`); process.
   await page.waitForSelector('.toast:has-text("does not look like an API key")');
   expect400 = false;
   assert((await page.inputValue('#settingsDrawer [name=apiKey]')) === '', 'the typed key is cleared from the page');
+  await page.click('#settingsDrawer button:has-text("n8n workflow")');
+  assert((await page.getAttribute('#settingsDrawer [name=n8nSecret]', 'type')) === 'password', 'the n8n option shows a hidden secret field');
   if (OUT) await page.screenshot({ path: `${OUT}/settings.png` });
   await page.keyboard.press('Escape');
   assert(await page.isHidden('#scrim'), 'closing settings removes the dark backdrop');

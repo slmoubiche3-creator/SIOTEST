@@ -78,6 +78,8 @@ export async function createApp({ dbPath = ':memory:', env = process.env, ai, ai
         if (req.method === 'DELETE' && p === '/api/settings/key') return send(200, await aiSettings.removeKey());
         if (req.method === 'GET' && p === '/api/settings/models') return send(200, await aiSettings.models());
         if (req.method === 'POST' && p === '/api/settings/model') return send(200, await aiSettings.saveModel((await readJson(req)).model));
+        if (req.method === 'POST' && p === '/api/settings/n8n') return send(200, await aiSettings.saveN8n(await readJson(req)));
+        if (req.method === 'DELETE' && p === '/api/settings/n8n') return send(200, await aiSettings.removeN8n());
       } catch (err) {
         if (!err.status) throw err;
         return send(err.status, { error: err.message });
