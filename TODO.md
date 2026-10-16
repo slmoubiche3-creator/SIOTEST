@@ -1,6 +1,11 @@
 # TODO
 
 ## À faire par l'assistant
+- [ ] Bouton « Reset demo data » (avec confirmation, protégé comme Settings, garde les réglages IA) | prochaine conversation | ajouté 2026-10-16
+- [ ] Assigner et changer le statut directement dans la liste | prochaine conversation | ajouté 2026-10-16
+- [ ] File « Needs review » (messages douteux à vérifier) | prochaine conversation | ajouté 2026-10-16
+- [ ] Bandeau et cartes « problèmes qui reviennent » en haut de la page | prochaine conversation | ajouté 2026-10-16
+- [ ] Workflow n8n d'entrée (n8n reçoit les messages et les envoie à l'outil) | prochaine conversation | ajouté 2026-10-16
 
 ## En attente de l'utilisateur
 - [ ] Vérifier que le recruteur peut ouvrir le dépôt (public, ou accès donné) | avant d'envoyer le DM | ajouté 2026-10-16
