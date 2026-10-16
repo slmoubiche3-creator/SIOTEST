@@ -4,7 +4,7 @@
 
 ## En attente de l'utilisateur
 - [ ] Vérifier que le recruteur peut ouvrir le dépôt (public, ou accès donné) | avant d'envoyer le DM | ajouté 2026-10-16
-- [ ] Mettre `main` comme branche par défaut sur GitHub (Settings → Default branch), puis me le dire pour que je supprime l'ancienne branche | maintenant | ajouté 2026-10-16
+- [ ] Supprimer l'ancienne branche de travail sur GitHub (page Branches → icône corbeille) | maintenant | ajouté 2026-10-16
 
 ## Conditionnel
 - [ ] Tester le moteur IA (clé + modèle dans Settings ⚙, puis `npm run eval -- data/holdout.csv`) | quand tu auras saisi toi-même ta clé API | ajouté 2026-10-16
