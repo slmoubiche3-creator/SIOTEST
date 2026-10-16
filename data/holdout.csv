@@ -1,0 +1,13 @@
+received_at,source,from,message,expected_team,expected_urgency,expected_language
+2026-10-12 08:00,email,Pierre Lefèvre <pierre@lefevre.fr>,"Bonjour, je n'arrive plus à me connecter, le lien de réinitialisation du mot de passe ne marche pas. Mes élèves attendent leur formation.",support,high,fr
+2026-10-12 08:05,chat,Anna Kowalski <anna@kowalski.pl>,"Hi! How can I translate my sales page into Polish?",support,normal,en
+2026-10-12 08:10,email,Marco Bianchi <marco@bianchi.it>,"Buongiorno, vorrei passare da ClickFunnels a systeme.io. Ho 15 funnel e 3000 contatti. Potete aiutarmi con la migrazione?",migration,normal,it
+2026-10-12 08:12,form,Lena Fischer <lena@fischer.de>,"Hallo, meine E-Mails landen alle im Spam-Ordner von Gmail. Was kann ich tun?",deliverability,high,de
+2026-10-12 08:20,email,Rachel Green <rachel@greencoaching.com>,"I was charged $97 but I'm on the free plan. I never upgraded. Please refund me.",billing,high,en
+2026-10-12 08:25,chat,Omar Haddad <omar@haddad.ma>,"Bonjour, mon site affiche une erreur 502 depuis une heure, et je ne suis pas le seul d'après le groupe Facebook.",tech,critical,fr
+2026-10-12 08:30,email,Sophie Martin <sophie.m@gmail.com>,"Can you please delete my account and all my data? I don't use systeme.io anymore.",security_legal,high,en
+2026-10-12 08:35,form,Jean Dupuis <jean@dupuis.fr>,"Ce serait top d'avoir un calendrier de réservation intégré avec Google Agenda.",product,low,fr
+2026-10-12 08:40,email,noreply@cheap-leads.net,"Get 10,000 verified B2B leads for only $49. Limited offer, reply YES.",support,low,en
+2026-10-12 08:45,chat,Carmen Ruiz <carmen@ruiz.es>,"Hola, ¿cómo puedo añadir un cupón de descuento a mi página de pedido?",support,normal,es
+2026-10-12 08:50,email,Victor Hugo <victor@hugo-formation.fr>,"Bonjour, mon domaine affiche 'certificat non sécurisé' depuis hier et mes ventes ont chuté. Lancement demain !",tech,high,fr
+2026-10-12 08:55,chat,Kenji Sato <kenji@sato.jp>,"My affiliate commissions for September are still pending. When will they be paid?",billing,normal,en

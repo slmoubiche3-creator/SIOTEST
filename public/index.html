@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inbox Triage</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232f6fdf'/%3E%3Cpath d='M8 17h5l2 3h2l2-3h5' stroke='white' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <button class="icon-btn only-mobile" id="menuBtn" aria-label="Open teams menu">☰</button>
+    <div class="brand">
+      <strong>Inbox Triage</strong>
+      <span class="muted" id="clock" title="All times are UTC"></span>
+    </div>
+    <span class="chip" id="engineChip" title="How messages are analysed"></span>
+    <div class="topbar-actions">
+      <label class="me">
+        <span class="muted">I am</span>
+        <select id="meSelect" aria-label="Who are you?"></select>
+      </label>
+      <label class="btn" title="Import a CSV export (received_at, source, from, message)">
+        Import CSV<input type="file" id="importInput" accept=".csv,text/csv" hidden>
+      </label>
+      <button class="btn" id="alertsBtn" aria-label="Alerts">🔔 <span id="alertsCount">0</span></button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar" id="sidebar" aria-label="Teams">
+      <button class="nav-item" data-view="all">All teams <span class="count" id="count-all"></span></button>
+      <button class="nav-item" data-view="mine">My queue <span class="count" id="count-mine"></span></button>
+      <h3>Teams</h3>
+      <div id="teamNav"></div>
+      <h3>Open incidents</h3>
+      <div id="incidentNav"><p class="muted small">None right now</p></div>
+    </nav>
+
+    <main class="main">
+      <section class="tiles" id="tiles" aria-label="Key numbers"></section>
+
+      <section class="filters" aria-label="Filters">
+        <input type="search" id="q" placeholder="Search customer, email, text…" aria-label="Search">
+        <select id="statusFilter" aria-label="Status">
+          <option value="open">Open (not resolved)</option>
+          <option value="new">New</option>
+          <option value="in_progress">In progress</option>
+          <option value="waiting_customer">Waiting for customer</option>
+          <option value="resolved">Resolved</option>
+          <option value="all">All</option>
+        </select>
+        <select id="urgencyFilter" aria-label="Urgency">
+          <option value="">Any urgency</option>
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="normal">Normal</option>
+          <option value="low">Low</option>
+        </select>
+        <select id="slaFilter" aria-label="Response time">
+          <option value="">Any response time</option>
+          <option value="overdue">Overdue only</option>
+        </select>
+        <select id="assigneeFilter" aria-label="Assignee">
+          <option value="">Anyone</option>
+          <option value="__none">Unassigned</option>
+        </select>
+      </section>
+
+      <h1 class="view-title" id="viewTitle">All teams</h1>
+      <div id="list" class="list" aria-live="polite"></div>
+    </main>
+  </div>
+
+  <aside class="drawer" id="drawer" aria-label="Conversation details" hidden></aside>
+  <aside class="drawer alerts" id="alertsDrawer" aria-label="Alerts" hidden></aside>
+  <div class="scrim" id="scrim" hidden></div>
+  <div class="toasts" id="toasts" aria-live="assertive"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

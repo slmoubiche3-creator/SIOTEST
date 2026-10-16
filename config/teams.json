@@ -1,0 +1,10 @@
+{
+  "_comment": "Who gets alerted for each team. 'lead' and 'oncall' receive critical alerts. 'slack' is the channel named in Slack alerts. Names are placeholders.",
+  "support":        { "lead": "Inès",    "oncall": "Karim",   "members": ["Inès", "Karim", "Léa", "Youssef"], "slack": "#support-urgent" },
+  "tech":           { "lead": "Mehdi",   "oncall": "Julien",  "members": ["Mehdi", "Julien", "Sofiane", "Clara"], "slack": "#tech-oncall" },
+  "billing":        { "lead": "Nadia",   "oncall": "Thomas",  "members": ["Nadia", "Thomas", "Amira"], "slack": "#billing" },
+  "deliverability": { "lead": "Hugo",    "oncall": "Sarah",   "members": ["Hugo", "Sarah", "Rayan"], "slack": "#deliverability" },
+  "migration":      { "lead": "Camille", "oncall": "Bilal",   "members": ["Camille", "Bilal", "Emma"], "slack": "#migration" },
+  "product":        { "lead": "Lucas",   "oncall": "Lucas",   "members": ["Lucas", "Manon"], "slack": "#product-feedback" },
+  "security_legal": { "lead": "Yasmine", "oncall": "Antoine", "members": ["Yasmine", "Antoine", "Chloé"], "slack": "#security-alerts" }
+}

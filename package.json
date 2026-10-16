@@ -1,0 +1,20 @@
+{
+  "name": "sio-inbox-triage",
+  "version": "1.0.0",
+  "description": "Internal tool that receives, analyses and routes customer messages to the right systeme.io team.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
+    "reset": "node -e \"for (const f of ['inbox.db', 'inbox.db-shm', 'inbox.db-wal']) require('fs').rmSync('data/' + f, { force: true })\"",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.js\"",
+    "eval": "node --disable-warning=ExperimentalWarning src/cli/eval.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0"
+  }
+}
