@@ -13,7 +13,7 @@ Requires Node.js 22.13 or newer. Nothing else: no build step, no database server
 ```bash
 npm start          # http://localhost:3000, imports data/requests-backlog.csv on first run
 npm test           # 65 automated tests
-npm run eval       # accuracy against human labels (see "How I tested it")
+npm run eval       # accuracy against human labels (see "How it was tested")
 npm run reset      # delete the local database (AI settings too) to start again
 ```
 
@@ -38,7 +38,7 @@ Each new message is compared with the stored ones: the same customer with an ope
 
 ## What it does
 
-| Step in the brief | What I built |
+| Step in the brief | What was built |
 |---|---|
 | **1. Receive and store** | A webhook (`POST /api/messages`) that contact forms, email parsers and live-chat tools can call, plus CSV import (button in the UI, or automatic on first start). Messages are stored in SQLite. Import is idempotent: re-importing the same file creates no duplicates. |
 | **2. Analyse** | Each message gets a topic, an owning team, an urgency (critical / high / normal / low), a language, a one-line summary, "what the customer needs", and the **reasons** behind each decision. |
@@ -47,7 +47,7 @@ Each new message is compared with the stored ones: the same customer with an ope
 
 ### The extras, and the problem each one solves
 
-The backlog is small but every message hides a trap. I built the extras from what the data showed:
+The backlog is small but every message hides a trap. The extras come from what the data showed:
 
 | What the backlog shows | What the tool does |
 |---|---|
@@ -124,20 +124,24 @@ n8n is great for the plumbing, so the tool uses it where it helps and keeps the 
 
 The triage logic itself (grouping, deadlines, incidents, guardrails, the agent screens) is easier to test, review and version as code: it is covered by 65 tests that run in a few seconds.
 
-## How I tested it
+## How it was built
+
+Built with an AI coding assistant, as the test allowed. I decided what to build and in which order, made the choices along the way and checked the results; the assistant wrote the code and the tests.
+
+## How it was tested
 
 - **Automated tests** (`npm test`, 65 tests): parsing of every date and sender format in the backlog, topic and urgency rules, deadlines, language detection, redaction, the AI engine with a fake client (request shape, guardrails, fallback on error / refusal / invalid output), the full import (26 conversations, 1 incident, 7 alerts), incident rules (3 different customers within 3 hours), the agent workflow, the HTTP API (token, validation, CSV upload, Slack delivery to a local fake webhook, static file safety), and the AI settings (bad key refused, key never returned, model tested before use, admin token, environment key wins, settings kept after a restart), and the n8n engine against a local fake n8n (secret header, `{ output }` format, AI failure in n8n falls back to the rules, wrong secret refused, secret never returned). Added since: **Reset demo data** (back to the 26 conversations, ids from 1, notes and assignments gone, AI settings kept, no Slack ping and one live "reset" event instead of a toast per alert, admin token required, a missing file changes nothing), data never reset by a restart or a page load, **Needs review** (the 7 backlog cases and their reasons, what counts as a guessed date, "Mark as checked" and coming back on a new doubt, spam left out), the banner data, an old database file upgraded on open, and the **n8n intake workflow** run by a small local stand-in for n8n (its own Code nodes and expressions) against a real Inbox Triage: one message, the backlog CSV (30 created, then 30 duplicates, Sarah grouped, Stripe incident found), other column names, `{"csv"}`, a wrong token (424) and empty input (400).
 - **In n8n**: both workflows were validated by n8n and run with simulated data (no AI call, no call to the tool). The intake workflow ran 3 times: a JSON list with other column names and an empty message (1 created, 1 duplicate, 1 rejected), a CSV with a line break inside a message plus a wrong token (counted as failed), and an empty body (400).
 - **Accuracy** (`npm run eval`):
-  - On the 30 backlog messages: 30/30 team, 30/30 urgency, 30/30 language. **This number is flattering**: I tuned the rules on these messages.
-  - On **12 new messages written afterwards and never used for tuning** (`npm run eval -- data/holdout.csv`): team 10/12, urgency 7/12, language 11/12. This is the honest number for the rules engine on new wording, and the reason the AI engine exists. I left these misses unfixed on purpose so the measurement stays valid.
+  - On the 30 backlog messages: 30/30 team, 30/30 urgency, 30/30 language. **This number is flattering**: the rules were tuned on these messages.
+  - On **12 new messages written afterwards and never used for tuning** (`npm run eval -- data/holdout.csv`): team 10/12, urgency 7/12, language 11/12. This is the honest number for the rules engine on new wording, and the reason the AI engine exists. These misses were left unfixed on purpose so the measurement stays valid.
 - **In a real browser** (`scripts/e2e-ui.cjs`, Playwright, 34 checks): the guided tour (all 20 steps on a computer, the team menu on a phone), queue order, the incident banner and the 3 "wrote again" cards, grouped conversation with deadline, assign and note, owner and status changed from the list row (signed, without opening it), changes kept after reloading the page, Needs review (7 rows, reasons shown, "Mark as checked"), a live alert when a critical message arrives through the webhook, a message containing HTML is not executed, the incident view, Reset demo data (confirmation, back to the original backlog), and no horizontal scroll on a 390px phone screen. It starts and ends with a reset, so it can be run again on the same demo server.
 
 ## What is not done yet
 
 Being direct about the limits:
 
-- **The AI engine has not been run against a live AI.** I had no API key in my environment, and its network policy blocked calls to the n8n instance. Both engines are tested with fakes; the first real step is to connect one in Settings, then run `npm run eval -- data/holdout.csv` (it uses the same settings).
+- **The AI engine has not been run against a live AI.** No API key was available in the build environment, and its network policy blocked calls to the n8n instance. Both engines are tested with fakes; the first real step is to connect one in Settings, then run `npm run eval -- data/holdout.csv` (it uses the same settings).
 - **Rules miss new phrasing.** The holdout misses: a German "Spam-Ordner", "delete my account and all my data" (GDPR), a charge on a free plan, "I'm not the only one" (wider outage), and a spam offer for "B2B leads".
 - **No login.** The "I am" picker records who did what but is not authentication. In production it would sit behind the company SSO.
 - **Slack not tested against real Slack** (tested against a local fake webhook).
