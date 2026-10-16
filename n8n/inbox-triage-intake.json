@@ -124,7 +124,7 @@
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
-          "responseCode": "={{ $json.failed > 0 && $json.created + $json.duplicate === 0 ? 502 : 200 }}"
+          "responseCode": "={{ $json.failed > 0 && $json.created + $json.duplicate === 0 ? 424 : 200 }}"
         }
       }
     },

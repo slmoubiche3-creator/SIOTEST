@@ -103,9 +103,9 @@ test('{ "csv": "..." } inside JSON works too', async () => {
   assert.deepEqual([res.status, res.body.created], [200, 1]);
 });
 
-test('a wrong token fails every message with a clear answer; nothing usable is a 400', async () => {
+test('a wrong token fails every message with a clear answer (424, not 502: n8n Cloud hides 502 bodies); nothing usable is a 400', async () => {
   const wrong = await runWorkflow(jsonRequest({ from: 'x@example.com', message: 'Hello, how do I export my contacts?' }), { token: 'wrong' });
-  assert.equal(wrong.status, 502);
+  assert.equal(wrong.status, 424);
   assert.equal(wrong.body.failed, 1);
   assert.match(wrong.body.results[0].error, /X-Ingest-Token/);
   const empty = await runWorkflow(jsonRequest({}));
