@@ -135,21 +135,6 @@
           "responseCode": 502
         }
       }
-    },
-    {
-      "name": "Setup notes",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        -32,
-        -40
-      ],
-      "parameters": {
-        "content": "## Inbox Triage: AI classifier\nThe Inbox Triage tool sends each customer message here and gets back team, urgency, language and an English summary. The tool keeps its own rules and safety checks, so if this workflow fails it simply falls back to its rules.\n\n**Setup**\n1. Open the webhook node and create the Header Auth credential: name `X-Triage-Secret`, value = a long random secret.\n2. Publish the workflow.\n3. In Inbox Triage: Settings (gear) > n8n, paste the production webhook URL and the same secret.\n\n**Change AI provider**: replace the OpenAI Model node with Anthropic, Gemini, Mistral... The rest stays the same.",
-        "color": 4,
-        "width": 816,
-        "height": 224
-      }
     }
   ],
   "connections": {
