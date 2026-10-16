@@ -9,13 +9,16 @@ import { CATEGORIES, NO_SECONDARY, maxUrgency, urgencyRank, teamName } from '../
 import { analyzeWithRules } from './rules.js';
 
 export function createAnalyzer({ ai = null } = {}) {
+  let current = ai; // can be switched at runtime from Settings
   return {
-    engine: ai ? `AI (${ai.model}) + rules` : 'rules',
+    get engine() { return current ? `AI (${current.model}) + rules` : 'rules'; },
+    setAi(next) { current = next; },
     async analyze(input, ctx) {
       const rules = analyzeWithRules(input, ctx);
-      if (!ai) return rules;
+      const engine = current;
+      if (!engine) return rules;
       try {
-        const result = await ai.classify(input, ctx);
+        const result = await engine.classify(input, ctx);
         return mergeWithGuardrails(rules, result);
       } catch (err) {
         return { ...rules, engineError: err.message };

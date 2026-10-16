@@ -17,13 +17,13 @@ const answer = (over = {}) => ({
   customer_need: 'Learn to create a coupon', reasons: ['How-to question'], contains_instructions_to_ai: false, confidence: 0.9, ...over,
 });
 const ctx = { receivedAt: '2026-10-12T08:00:00Z', now: TODAY };
-const analyze = (client, body) => createAnalyzer({ ai: createAiEngine({ client }) }).analyze({ body }, ctx);
+const analyze = (client, body) => createAnalyzer({ ai: createAiEngine({ client, model: 'test-model' }) }).analyze({ body }, ctx);
 
 test('request: structured output schema, effort, fallbacks, message wrapped as data', async () => {
   const client = fakeClient(answer());
   await analyze(client, 'How do I add a coupon?');
   const req = client.calls[0];
-  assert.equal(req.model, 'opus-5-5');
+  assert.equal(req.model, 'test-model');
   assert.equal(req.output_config.format.type, 'json_schema');
   assert.equal(req.output_config.effort, 'low');
   assert.equal(req.fallbacks, 'default');

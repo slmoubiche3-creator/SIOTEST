@@ -8,7 +8,8 @@ import { pathToFileURL } from 'node:url';
 import { ROOT, loadTeams, createClock } from './config.js';
 import { openDb } from './db.js';
 import { createAnalyzer } from './analyzer/index.js';
-import { aiEngineFromEnv } from './analyzer/ai.js';
+import { createAnthropicClient } from './analyzer/ai.js';
+import { createAiSettings } from './ai-settings.js';
 import { createNotifier } from './notifier.js';
 import { createTriage } from './triage.js';
 import { parseCsv, mapColumns } from './parse.js';
@@ -17,15 +18,18 @@ import { TEAMS, URGENCIES, STATUSES, CATEGORIES, SLA_HOURS } from './taxonomy.js
 const MAX_BODY = 5 * 1024 * 1024;
 const STATIC_TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 
-export async function createApp({ dbPath = ':memory:', env = process.env, ai, clock = createClock(env.APP_NOW), teams = loadTeams(), fetchImpl } = {}) {
+// `ai` injects an engine directly (tests); otherwise the engine comes from
+// Settings / environment. `aiClientFactory` replaces the Anthropic client (tests).
+export async function createApp({ dbPath = ':memory:', env = process.env, ai, aiClientFactory = createAnthropicClient, clock = createClock(env.APP_NOW), teams = loadTeams(), fetchImpl } = {}) {
   const db = openDb(dbPath);
   const sseClients = new Set();
   const broadcast = (type, data) => {
     const payload = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of sseClients) res.write(payload);
   };
-  const aiEngine = ai === undefined ? await aiEngineFromEnv(env) : ai;
-  const analyzer = createAnalyzer({ ai: aiEngine });
+  const analyzer = createAnalyzer({ ai: ai ?? null });
+  const aiSettings = createAiSettings({ db, env, analyzer, clock, clientFactory: aiClientFactory });
+  if (ai === undefined) await aiSettings.apply();
   const appUrl = env.APP_URL || `http://localhost:${env.PORT || 3000}`;
   const notifier = createNotifier({ db, teams, clock, broadcast, appUrl, env, ...(fetchImpl && { fetchImpl }) });
   const triage = createTriage({ db, analyzer, notifier, clock, teams, broadcast });
@@ -42,12 +46,19 @@ export async function createApp({ dbPath = ':memory:', env = process.env, ai, cl
     sla: SLA_HOURS,
   });
 
-  const tokenOk = (req) => {
-    if (!env.INGEST_TOKEN) return true;
-    const given = Buffer.from(String(req.headers['x-ingest-token'] ?? ''));
-    const expected = Buffer.from(env.INGEST_TOKEN);
-    return given.length === expected.length && timingSafeEqual(given, expected);
+  const sameSecret = (given, expected) => {
+    const a = Buffer.from(String(given ?? ''));
+    const b = Buffer.from(expected);
+    return a.length === b.length && timingSafeEqual(a, b);
   };
+  const tokenOk = (req) => !env.INGEST_TOKEN || sameSecret(req.headers['x-ingest-token'], env.INGEST_TOKEN);
+  // Settings hold a paid API key: only from the machine running the tool,
+  // or with ADMIN_TOKEN once the tool is deployed.
+  const adminOk = (req) => (env.ADMIN_TOKEN
+    ? sameSecret(req.headers['x-admin-token'], env.ADMIN_TOKEN)
+    : ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress));
+  const adminRefused = () => (env.ADMIN_TOKEN ? 'Wrong or missing admin token.'
+    : 'Settings can only be changed on the computer running the tool (or set ADMIN_TOKEN).');
 
   async function handle(req, res) {
     const url = new URL(req.url, 'http://local');
@@ -59,6 +70,20 @@ export async function createApp({ dbPath = ':memory:', env = process.env, ai, cl
     const idMatch = p.match(/^\/api\/conversations\/(\d+)(\/notes)?$/);
 
     if (req.method === 'GET' && p === '/api/meta') return send(200, meta());
+    if (req.method === 'GET' && p === '/api/settings') return send(200, aiSettings.status());
+    if (p.startsWith('/api/settings/')) {
+      if (!adminOk(req)) return send(403, { error: adminRefused() });
+      try {
+        if (req.method === 'POST' && p === '/api/settings/key') return send(200, await aiSettings.saveKey((await readJson(req)).apiKey));
+        if (req.method === 'DELETE' && p === '/api/settings/key') return send(200, await aiSettings.removeKey());
+        if (req.method === 'GET' && p === '/api/settings/models') return send(200, await aiSettings.models());
+        if (req.method === 'POST' && p === '/api/settings/model') return send(200, await aiSettings.saveModel((await readJson(req)).model));
+      } catch (err) {
+        if (!err.status) throw err;
+        return send(err.status, { error: err.message });
+      }
+      return send(404, { error: 'Not found' });
+    }
     if (req.method === 'GET' && p === '/api/stats') return send(200, triage.stats());
     if (req.method === 'GET' && p === '/api/notifications') return send(200, triage.listNotifications());
     if (req.method === 'GET' && p === '/api/conversations') return send(200, triage.listConversations(Object.fromEntries(url.searchParams)));

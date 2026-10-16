@@ -24,6 +24,7 @@
         Import CSV<input type="file" id="importInput" accept=".csv,text/csv" hidden>
       </label>
       <button class="btn" id="tourBtn" title="Guided tour of the features">▶ Tour</button>
+      <button class="btn" id="settingsBtn" aria-label="Settings" title="Settings: AI engine">⚙</button>
       <button class="btn" id="alertsBtn" aria-label="Alerts">🔔 <span id="alertsCount">0</span></button>
     </div>
   </header>
@@ -75,6 +76,7 @@
 
   <aside class="drawer" id="drawer" aria-label="Conversation details" hidden></aside>
   <aside class="drawer alerts" id="alertsDrawer" aria-label="Alerts" hidden></aside>
+  <aside class="drawer alerts" id="settingsDrawer" aria-label="Settings" hidden></aside>
   <div class="scrim" id="scrim" hidden></div>
   <div class="toasts" id="toasts" aria-live="assertive"></div>
 

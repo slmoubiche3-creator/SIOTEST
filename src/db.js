@@ -98,6 +98,11 @@ CREATE TABLE IF NOT EXISTS incidents (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY,
   at TEXT NOT NULL,

@@ -33,8 +33,9 @@ const assert = (ok, msg) => { if (!ok) { console.error(`FAIL: ${msg}`); process.
 
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   await page.addInitScript(() => localStorage.setItem('triage.tourDone', '1'));
+  let expect400 = false; // the bad-key check below triggers one on purpose
   page.on('pageerror', (e) => errors.push(e.message));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('console', (m) => { if (m.type() === 'error' && !(expect400 && /status of 400/.test(m.text()))) errors.push(m.text()); });
   page.on('dialog', (d) => d.accept('test reason'));
 
   await page.goto(`${URL_}/#/all`);
@@ -68,6 +69,21 @@ const assert = (ok, msg) => { if (!ok) { console.error(`FAIL: ${msg}`); process.
     body: JSON.stringify({ from: 'x@example.com', message: '<img src=x onerror="window.__xss=1"> how do I add a logo?' }) }));
   await page.waitForTimeout(800);
   assert(!(await page.evaluate(() => window.__xss === 1)), 'HTML inside a message is shown as text, never executed');
+
+  // Settings: the AI is off, the key field is hidden text, a bad key is refused.
+  await page.click('#settingsBtn');
+  await page.waitForSelector('#settingsDrawer:not([hidden]) h2');
+  assert((await page.textContent('#settingsDrawer')).includes('Off: rules only'), 'settings show the AI engine is off');
+  assert((await page.getAttribute('#settingsDrawer [name=apiKey]', 'type')) === 'password', 'the API key field hides what is typed');
+  await page.fill('#settingsDrawer [name=apiKey]', 'too-short');
+  expect400 = true;
+  await page.click('#settingsDrawer button:has-text("Save key")');
+  await page.waitForSelector('.toast:has-text("does not look like an API key")');
+  expect400 = false;
+  assert((await page.inputValue('#settingsDrawer [name=apiKey]')) === '', 'the typed key is cleared from the page');
+  if (OUT) await page.screenshot({ path: `${OUT}/settings.png` });
+  await page.keyboard.press('Escape');
+  assert(await page.isHidden('#scrim'), 'closing settings removes the dark backdrop');
 
   await page.goto(`${URL_}/#/incident/1`);
   await page.waitForTimeout(500);

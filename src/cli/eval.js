@@ -1,7 +1,7 @@
 // Measures the analyzer against human labels.
 //   npm run eval                      -> backlog (labels in test/fixtures/backlog-expected.json)
 //   npm run eval -- data/holdout.csv  -> any CSV with expected_team / expected_urgency columns
-// Uses the AI engine too when ANTHROPIC_API_KEY is set (this costs API credits).
+// Uses the AI engine too when ANTHROPIC_API_KEY and AI_MODEL are set (this costs API credits).
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT } from '../config.js';

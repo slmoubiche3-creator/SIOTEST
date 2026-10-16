@@ -368,7 +368,7 @@ function closeDrawer(updateHash = true) {
   $('#drawer').hidden = true;
   delete $('#drawer').dataset.conv;
   state.drawerSig = null;
-  if ($('#alertsDrawer').hidden) $('#scrim').hidden = true;
+  syncScrim();
   if (updateHash && parseHash().conv) location.hash = viewHash();
 }
 
@@ -396,7 +396,107 @@ function openAlerts() {
 }
 function closeAlerts() {
   $('#alertsDrawer').hidden = true;
-  if ($('#drawer').hidden) $('#scrim').hidden = true;
+  syncScrim();
+}
+
+// ---------- settings (AI engine) ----------
+
+const settings = { status: null, models: [], busy: false };
+
+function renderEngineChip() {
+  $('#engineChip').textContent = `Analysis: ${state.meta.engine}${state.meta.slack ? ' · Slack on' : ''}`;
+}
+
+async function openSettings() {
+  try { settings.status = await api('/api/settings'); } catch (err) { toast('Settings unavailable', err.message); return; }
+  settings.models = [];
+  renderSettings();
+  $('#settingsDrawer').hidden = false;
+  $('#scrim').hidden = false;
+  if (settings.status.keySource && !settings.status.needsAdminToken) loadModels();
+}
+function closeSettings() {
+  $('#settingsDrawer').hidden = true;
+  syncScrim();
+}
+// The dark backdrop stays while any side panel is open.
+function syncScrim() {
+  $('#scrim').hidden = ['#drawer', '#alertsDrawer', '#settingsDrawer'].every((sel) => $(sel).hidden);
+}
+
+// Settings changes need the admin token when the server asks for one.
+async function adminApi(path, opts = {}) {
+  const token = $('#settingsDrawer [name=admin]')?.value ?? '';
+  return api(path, { ...opts, headers: { ...(opts.headers ?? {}), ...(settings.status.needsAdminToken ? { 'x-admin-token': token } : {}) } });
+}
+async function settingsAction(fn, success) {
+  settings.busy = true;
+  renderSettings();
+  try {
+    await fn();
+    if (success) toast(success);
+    state.meta = await api('/api/meta');
+    renderEngineChip();
+  } catch (err) {
+    toast('Not saved', err.message);
+  } finally {
+    settings.busy = false;
+    renderSettings();
+  }
+}
+const loadModels = () => settingsAction(async () => { settings.models = await adminApi('/api/settings/models'); });
+
+function renderSettings() {
+  const s = settings.status;
+  const busy = settings.busy;
+  const keyForm = h('form', { class: 'setting-form', onsubmit: (e) => {
+    e.preventDefault();
+    const input = e.target.elements.apiKey;
+    const apiKey = input.value;
+    input.value = ''; // never keep the key in the page
+    settingsAction(async () => {
+      const res = await adminApi('/api/settings/key', { method: 'POST', body: JSON.stringify({ apiKey }) });
+      settings.status = res.status;
+      settings.models = res.models;
+    }, 'API key saved');
+  } },
+  h('input', { type: 'password', name: 'apiKey', autocomplete: 'off', spellcheck: 'false', placeholder: s.keySource === 'settings' ? 'Paste a new key to replace it' : 'Paste your Anthropic API key', 'aria-label': 'Anthropic API key', required: true, disabled: busy }),
+  h('button', { class: 'btn primary', disabled: busy }, 'Save key'));
+
+  const modelPart = !s.keySource ? h('p', { class: 'muted' }, 'Add an API key first.')
+    : !settings.models.length ? h('div', { class: 'setting-form' },
+      s.model ? h('span', {}, `Current model: ${s.model}`) : h('span', { class: 'muted' }, 'No model chosen yet.'),
+      h('button', { class: 'btn', disabled: busy, onclick: loadModels }, 'Load available models'))
+    : h('form', { class: 'setting-form', onsubmit: (e) => {
+      e.preventDefault();
+      const model = e.target.elements.model.value;
+      settingsAction(async () => { settings.status = await adminApi('/api/settings/model', { method: 'POST', body: JSON.stringify({ model }) }); }, 'AI engine is on');
+    } },
+    h('select', { name: 'model', 'aria-label': 'Model', disabled: busy },
+      settings.models.map((m) => h('option', { value: m.id, selected: m.id === s.model }, m.name === m.id ? m.id : `${m.name} (${m.id})`))),
+    h('button', { class: 'btn primary', disabled: busy }, busy ? 'Testing…' : 'Use this model'));
+
+  fill($('#settingsDrawer'),
+    h('div', { class: 'drawer-head' }, h('h2', {}, 'Settings'), h('button', { class: 'icon-btn', 'aria-label': 'Close', onclick: closeSettings }, '✕')),
+    h('div', { class: 'section' }, h('h3', {}, 'AI engine'),
+      h('div', { class: `callout ${s.enabled ? '' : 'warn'}` }, h('strong', {}, s.enabled ? `On: ${s.engine}` : 'Off: rules only'),
+        s.forcedRulesOnly ? h('div', { class: 'small' }, 'Turned off on the server (ANALYZER=rules).') : null,
+        s.error ? h('div', { class: 'small' }, s.error) : null),
+      h('p', { class: 'muted small' }, 'The rules always run. With an Anthropic API key and a model, an AI also reads every message, in any language, and writes an English summary. One key works for every model; models differ in price and speed.')),
+    s.needsAdminToken ? h('div', { class: 'section' }, h('h3', {}, 'Admin token'),
+      h('input', { type: 'password', name: 'admin', autocomplete: 'off', placeholder: 'Required to change settings', 'aria-label': 'Admin token' })) : null,
+    h('div', { class: 'section' }, h('p', { class: 'step-title' }, '1 · API key'),
+      s.keySource === 'environment' ? h('p', {}, 'Set on the server (ANTHROPIC_API_KEY). Change it there.')
+        : [s.keySource === 'settings' ? h('p', {}, '✓ A key is saved. It is hidden and stored only on the server.') : null,
+          keyForm,
+          s.keySource === 'settings' ? h('button', { class: 'btn', style: 'margin-top:8px', disabled: busy, onclick: () => settingsAction(async () => {
+            settings.status = await adminApi('/api/settings/key', { method: 'DELETE' });
+            settings.models = [];
+          }, 'API key removed') }, 'Remove the key') : null],
+      h('p', { class: 'muted small' }, 'The key is never shown again, never sent back to the browser and never saved in Git.')),
+    h('div', { class: 'section' }, h('p', { class: 'step-title' }, '2 · Model'), modelPart,
+      h('p', { class: 'muted small' }, 'The list comes from Anthropic for your key. Before switching, the tool sends one short test message to check that the model works.')),
+  );
 }
 
 function toast(title, body, onclick) {
@@ -417,7 +517,7 @@ const closeMenu = () => $('#sidebar').classList.remove('open');
 
 function renderHeader() {
   const m = state.meta;
-  $('#engineChip').textContent = `Analysis: ${m.engine}${m.slack ? ' · Slack on' : ''}`;
+  renderEngineChip();
   const tick = () => { $('#clock').textContent = `${fmtDate(new Date(nowMs()).toISOString())} UTC${m.simulatedClock ? ' · simulated "today"' : ''}`; };
   tick();
   setInterval(tick, 30000);
@@ -480,7 +580,9 @@ function tourSteps() {
     { title: 'Search and filters', target: '.filters', ...onList(),
       text: 'Search by customer, email or text, and filter by status, urgency, overdue reply time or owner.' },
     { title: 'How messages are analysed', target: '#engineChip', ...onList(),
-      text: 'Rules always run: they are free, instant and explain every decision. When an API key is set, an AI engine also reads each message in any language; it can raise urgency but never lower it.' },
+      text: 'Rules always run: they are free, instant and explain every decision. This label shows whether an AI engine also reads each message. The AI can raise urgency, never lower it.' },
+    { title: 'Turn on the AI', target: '#settingsBtn', ...onList(),
+      text: 'In Settings, paste an Anthropic API key (it stays hidden on the server) and pick a model from the list Anthropic returns. One key works for every model.' },
     { title: 'You are ready', ...onList(),
       text: 'New messages and alerts appear live, without reloading. Use "Import CSV" to load more messages (duplicates are skipped). Restart this tour any time with the Tour button.' },
   ];
@@ -492,6 +594,7 @@ const tour = createTour(tourSteps, {
 
 async function startTour() {
   if (tour.active) return;
+  closeSettings();
   resetFilters();
   const [open, stats] = await Promise.all([api('/api/conversations'), api('/api/stats')]);
   const byLastFirst = [...open].sort((a, b) => b.message_count - a.message_count);
@@ -515,8 +618,9 @@ async function init() {
   $('#menuBtn').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
   $('#alertsBtn').addEventListener('click', openAlerts);
   $('#tourBtn').addEventListener('click', startTour);
-  $('#scrim').addEventListener('click', () => { closeAlerts(); closeDrawer(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeAlerts(); closeDrawer(); } });
+  $('#settingsBtn').addEventListener('click', openSettings);
+  $('#scrim').addEventListener('click', () => { closeSettings(); closeAlerts(); closeDrawer(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSettings(); closeAlerts(); closeDrawer(); } });
   $('#importInput').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
