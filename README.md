@@ -12,7 +12,7 @@ Requires Node.js 22.13 or newer. Nothing else: no build step, no database server
 
 ```bash
 npm start          # http://localhost:3000, imports data/requests-backlog.csv on first run
-npm test           # 65 automated tests
+npm test           # 66 automated tests
 npm run eval       # accuracy against human labels (see "How it was tested")
 npm run reset      # delete the local database (AI settings too) to start again
 ```
@@ -60,7 +60,7 @@ The backlog is small but every message hides a trap. The extras come from what t
 | A message with no sender, one with "lina.haddad.com" as email | Kept, but flagged "we cannot reply", and listed in **Needs review**. |
 | VAT invoice problem *and* an editor crash in one message | Second topic detected: the conversation also appears in the other team's queue. |
 | 6 date formats, a missing year, DD/MM vs MM/DD | Robust date parsing; any guess is shown next to the message and listed in **Needs review**. |
-| Spam and "test test please ignore" | Kept low and out of the headline numbers. |
+| Spam and "test test please ignore" | Kept low, out of the headline numbers, and hidden from the queue unless "Show spam & test" is chosen. |
 
 Reply-time targets (SLA): critical 1h, high 4h, normal 24h, low 72h. The clock stops when an agent marks "Waiting for customer" and restarts when the customer writes again.
 
@@ -122,7 +122,7 @@ n8n is great for the plumbing, so the tool uses it where it helps and keeps the 
   3. publish, then send messages to the production webhook URL.
 - **Behind (next step)**: the Slack alerts could be routed through n8n to add PagerDuty, SMS, or a FreeScout ticket.
 
-The triage logic itself (grouping, deadlines, incidents, guardrails, the agent screens) is easier to test, review and version as code: it is covered by 65 tests that run in a few seconds.
+The triage logic itself (grouping, deadlines, incidents, guardrails, the agent screens) is easier to test, review and version as code: it is covered by 66 tests that run in a few seconds.
 
 ## How it was built
 
@@ -130,12 +130,12 @@ Built with an AI coding assistant, as the test allowed. I decided what to build 
 
 ## How it was tested
 
-- **Automated tests** (`npm test`, 65 tests): parsing of every date and sender format in the backlog, topic and urgency rules, deadlines, language detection, redaction, the AI engine with a fake client (request shape, guardrails, fallback on error / refusal / invalid output), the full import (26 conversations, 1 incident, 7 alerts), incident rules (3 different customers within 3 hours), the agent workflow, the HTTP API (token, validation, CSV upload, Slack delivery to a local fake webhook, static file safety), and the AI settings (bad key refused, key never returned, model tested before use, admin token, environment key wins, settings kept after a restart), and the n8n engine against a local fake n8n (secret header, `{ output }` format, AI failure in n8n falls back to the rules, wrong secret refused, secret never returned). Added since: **Reset demo data** (back to the 26 conversations, ids from 1, notes and assignments gone, AI settings kept, no Slack ping and one live "reset" event instead of a toast per alert, admin token required, a missing file changes nothing), data never reset by a restart or a page load, **Needs review** (the 7 backlog cases and their reasons, what counts as a guessed date, "Mark as checked" and coming back on a new doubt, spam left out), the banner data, an old database file upgraded on open, and the **n8n intake workflow** run by a small local stand-in for n8n (its own Code nodes and expressions) against a real Inbox Triage: one message, the backlog CSV (30 created, then 30 duplicates, Sarah grouped, Stripe incident found), other column names, `{"csv"}`, a wrong token (424) and empty input (400).
+- **Automated tests** (`npm test`, 66 tests): parsing of every date and sender format in the backlog, topic and urgency rules, deadlines, language detection, redaction, the AI engine with a fake client (request shape, guardrails, fallback on error / refusal / invalid output), the full import (26 conversations, 1 incident, 7 alerts), incident rules (3 different customers within 3 hours), the agent workflow, the HTTP API (token, validation, CSV upload, Slack delivery to a local fake webhook, static file safety), and the AI settings (bad key refused, key never returned, model tested before use, admin token, environment key wins, settings kept after a restart), and the n8n engine against a local fake n8n (secret header, `{ output }` format, AI failure in n8n falls back to the rules, wrong secret refused, secret never returned). Added since: **Reset demo data** (back to the 26 conversations, ids from 1, notes and assignments gone, AI settings kept, no Slack ping and one live "reset" event instead of a toast per alert, admin token required, a missing file changes nothing), data never reset by a restart or a page load, **Needs review** (the 7 backlog cases and their reasons, what counts as a guessed date, "Mark as checked" and coming back on a new doubt, spam left out), the banner data, numbers that match the lists they open (spam and test hidden in both, no "no answer" once a customer is answered, a fully resolved incident leaves "Open incidents", the incident title following its 4th customer), an old database file upgraded on open, and the **n8n intake workflow** run by a small local stand-in for n8n (its own Code nodes and expressions) against a real Inbox Triage: one message, the backlog CSV (30 created, then 30 duplicates, Sarah grouped, Stripe incident found), other column names, `{"csv"}`, a wrong token (424) and empty input (400).
 - **In n8n**: both workflows were validated by n8n and run with simulated data (no AI call, no call to the tool). The intake workflow ran 3 times: a JSON list with other column names and an empty message (1 created, 1 duplicate, 1 rejected), a CSV with a line break inside a message plus a wrong token (counted as failed), and an empty body (400).
 - **Accuracy** (`npm run eval`):
   - On the 30 backlog messages: 30/30 team, 30/30 urgency, 30/30 language. **This number is flattering**: the rules were tuned on these messages.
   - On **12 new messages written afterwards and never used for tuning** (`npm run eval -- data/holdout.csv`): team 10/12, urgency 7/12, language 11/12. This is the honest number for the rules engine on new wording, and the reason the AI engine exists. These misses were left unfixed on purpose so the measurement stays valid.
-- **In a real browser** (`scripts/e2e-ui.cjs`, Playwright, 34 checks): the guided tour (all 20 steps on a computer, the team menu on a phone), queue order, the incident banner and the 3 "wrote again" cards, grouped conversation with deadline, assign and note, owner and status changed from the list row (signed, without opening it), changes kept after reloading the page, Needs review (7 rows, reasons shown, "Mark as checked"), a live alert when a critical message arrives through the webhook, a message containing HTML is not executed, the incident view, Reset demo data (confirmation, back to the original backlog), and no horizontal scroll on a 390px phone screen. It starts and ends with a reset, so it can be run again on the same demo server.
+- **In a real browser** (`scripts/e2e-ui.cjs`, Playwright, 35 checks): the guided tour (all 20 steps on a computer, the team menu on a phone), queue order, the incident banner and the 3 "wrote again" cards, a tile showing exactly the rows it opens, grouped conversation with deadline, assign and note, owner and status changed from the list row (signed, without opening it), changes kept after reloading the page, Needs review (7 rows, reasons shown, "Mark as checked"), a live alert when a critical message arrives through the webhook, a message containing HTML is not executed, the incident view, Reset demo data (confirmation, back to the original backlog), and no horizontal scroll on a 390px phone screen. It starts and ends with a reset, so it can be run again on the same demo server.
 
 ## What is not done yet
 

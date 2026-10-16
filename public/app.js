@@ -140,6 +140,7 @@ function viewParams(r = parseHash()) {
 async function refresh() {
   const r = parseHash();
   const base = viewParams(r);
+  if ($('#noiseFilter').value === 'hide') base.set('noise', 'hide');
   const filtered = new URLSearchParams(base);
   const q = $('#q').value.trim();
   if (q) filtered.set('q', q);
@@ -166,7 +167,7 @@ const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTi
 function render() {
   const r = parseHash();
   renderNav(r);
-  renderTiles();
+  renderTiles(r);
   renderAttention(r);
   renderList(r);
   renderAlertsCount();
@@ -195,13 +196,16 @@ function renderNav(r) {
   $('#viewHint').textContent = 'Conversations the tool is not sure about: no or invalid sender, a guessed date, uncertain routing, AI and rules disagreeing, or text trying to steer the AI. Open one, fix what is wrong, then mark it as checked.';
 }
 
-function renderTiles() {
-  const real = state.base.filter((c) => c.status !== 'resolved' && !c.flags.some((f) => f.type === 'spam' || f.type === 'test'));
+// The tiles count exactly what the queue shows (spam and test only when shown).
+function renderTiles(r) {
+  const real = state.base.filter((c) => c.status !== 'resolved');
+  const noiseHint = $('#noiseFilter').value === 'hide'
+    ? (r.view === 'all' ? `${state.stats.noise} spam/test hidden` : 'spam & test hidden') : 'spam & test included';
   const n = (fn) => real.filter(fn).length;
   const critical = n((c) => c.urgency === 'critical');
   const overdue = n((c) => c.sla.state !== 'met' && Date.parse(c.sla.dueAt) < nowMs());
   const tiles = [
-    { label: 'Open conversations', value: real.length, hint: `${state.base.length - real.length - state.base.filter((c) => c.status === 'resolved').length} spam/test hidden`, apply: () => resetFilters() },
+    { label: 'Open conversations', value: real.length, hint: noiseHint, apply: () => resetFilters() },
     { label: 'Critical', value: critical, alarm: critical > 0, hint: 'reply target 1h', apply: () => setFilter('#urgencyFilter', 'critical') },
     { label: 'Past reply target', value: overdue, alarm: overdue > 0, hint: 'SLA overdue', apply: () => setFilter('#slaFilter', 'overdue') },
     { label: 'Unassigned', value: n((c) => !c.assignee), hint: 'nobody owns them', apply: () => setFilter('#assigneeFilter', '__none') },
@@ -651,6 +655,7 @@ function setFilter(sel, value) { $(sel).value = value; refresh(); }
 function resetFilters() {
   $('#q').value = ''; $('#statusFilter').value = 'open';
   for (const sel of ['#urgencyFilter', '#slaFilter', '#assigneeFilter']) $(sel).value = '';
+  $('#noiseFilter').value = 'hide';
   refresh();
 }
 const closeMenu = () => $('#sidebar').classList.remove('open');
@@ -728,7 +733,7 @@ function tourSteps() {
       ready: () => !$('#alertsDrawer').hidden && $('#drawer').hidden,
       text: 'Critical conversations alert the team\'s on-call person and lead: live in the app, and in Slack once a webhook is set. Each alert shows who was told and whether delivery worked.' },
     { title: 'Search and filters', target: '.filters', ...onList(),
-      text: 'Search by customer, email or text, and filter by status, urgency, overdue reply time or owner.' },
+      text: 'Search by customer, email or text, and filter by status, urgency, overdue reply time or owner. Spam and test messages are hidden unless you ask to see them.' },
     { title: 'How messages are analysed', target: '#engineChip', ...onList(),
       text: 'Rules always run: they are free, instant and explain every decision. This label shows whether an AI engine also reads each message. The AI can raise urgency, never lower it.' },
     { title: 'Turn on the AI', target: '#settingsBtn', ...onList(),
@@ -763,7 +768,7 @@ async function init() {
   state.offset = Date.parse(state.meta.now) - Date.now();
   renderHeader();
   $('#meSelect').addEventListener('change', (e) => { state.me = e.target.value; storage.set('me', state.me); refresh(); });
-  for (const sel of ['#statusFilter', '#urgencyFilter', '#slaFilter', '#assigneeFilter']) $(sel).addEventListener('change', refresh);
+  for (const sel of ['#statusFilter', '#urgencyFilter', '#slaFilter', '#assigneeFilter', '#noiseFilter']) $(sel).addEventListener('change', refresh);
   let searchTimer;
   $('#q').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(refresh, 250); });
   for (const btn of document.querySelectorAll('[data-view]')) btn.addEventListener('click', () => { location.hash = `#/${btn.dataset.view}`; closeMenu(); });

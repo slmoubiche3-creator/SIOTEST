@@ -30,7 +30,8 @@ test('incident: 4 customers with failing Stripe checkout = one incident, one Sla
   const { triage, db, slackCalls } = await importBacklog({ env: { SLACK_WEBHOOK_URL: 'https://hooks.example/x' } });
   const incidents = db.all('SELECT * FROM incidents');
   assert.equal(incidents.length, 1);
-  assert.match(incidents[0].title, /Stripe payments failing \(3 customers/);
+  assert.match(incidents[0].title, /Stripe payments failing \(4 customers in 68 min\)/, 'the title follows the 4th customer');
+  assert.match(triage.listNotifications().find((n) => n.kind === 'incident').title, /\(3 customers in 29 min\)/, 'the alert was sent at the 3rd');
   assert.equal(triage.listConversations({ incident: incidents[0].id }).length, 4);
   const kinds = triage.listNotifications().map((n) => n.kind).sort();
   assert.deepEqual(kinds, ['critical', 'critical', 'critical', 'critical', 'critical_followup', 'incident', 'incident_update']);

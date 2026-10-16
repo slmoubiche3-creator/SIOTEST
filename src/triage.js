@@ -24,6 +24,11 @@ const INCIDENT_WORDING = {
 };
 
 const iso = (ms) => new Date(ms).toISOString();
+// Who reported a message: a sender without a valid email counts once per raw
+// address (or per conversation if empty).
+const REPORTER = `COALESCE(customer_email, NULLIF(from_raw, ''), 'conv:' || conversation_id)`;
+const incidentTitle = (category, term, customers, minutes) =>
+  `Possible incident: ${term.charAt(0).toUpperCase() + term.slice(1)} ${INCIDENT_WORDING[category]} (${customers} customers in ${minutes} min)`;
 const URGENCY_ORDER = `CASE urgency WHEN 'critical' THEN 3 WHEN 'high' THEN 2 WHEN 'normal' THEN 1 ELSE 0 END`;
 
 export function slaInfo(conv, now) {
@@ -152,8 +157,10 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
 
     let urgency = maxUrgency(...msgs.map((m) => m.urgency));
     const unanswered = msgs.filter((m) => m.received_at >= conv.sla_started_at).length;
+    // Once an agent has answered, "wrote N times without an answer" is no longer true.
+    const answered = conv.status === 'waiting_customer' || conv.status === 'resolved';
     if (unanswered >= 2) {
-      flags.push({ type: 'repeat_contact', count: unanswered, label: `Customer wrote ${unanswered} times without an answer` });
+      if (!answered) flags.push({ type: 'repeat_contact', count: unanswered, label: `Customer wrote ${unanswered} times without an answer` });
       if (!LOW_ONLY.has(lead.category) && urgencyRank(urgency) < urgencyRank('high')) {
         urgency = 'high';
         reasons.push(`Customer wrote ${unanswered} times without an answer`);
@@ -199,12 +206,12 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
     if (open) {
       attachToIncident(open.id, m.conversation_id);
       db.run('UPDATE incidents SET last_at = MAX(last_at, ?) WHERE id = ?', m.received_at, open.id);
+      refreshIncidentTitle(open.id);
       return { incident: db.get('SELECT * FROM incidents WHERE id = ?', open.id), created: false };
     }
-    // Reports of the same problem around this message. A sender without a
-    // valid email counts once per raw address (or per conversation if empty).
+    // Reports of the same problem around this message.
     const reports = db.all(
-      `SELECT conversation_id, received_at, COALESCE(customer_email, NULLIF(from_raw, ''), 'conv:' || conversation_id) AS who
+      `SELECT conversation_id, received_at, ${REPORTER} AS who
        FROM messages WHERE category = ? AND incident_term = ? AND received_at BETWEEN ? AND ? ORDER BY received_at`,
       m.category, m.incident_term, iso(t - INCIDENT_WINDOW), iso(t + INCIDENT_WINDOW),
     );
@@ -223,8 +230,7 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
     const firstAt = best[0].received_at;
     const lastAt = best.at(-1).received_at;
     const minutes = Math.round((Date.parse(lastAt) - Date.parse(firstAt)) / 60000);
-    const term = m.incident_term.charAt(0).toUpperCase() + m.incident_term.slice(1);
-    const title = `Possible incident: ${term} ${INCIDENT_WORDING[m.category]} (${customers} customers in ${minutes} min)`;
+    const title = incidentTitle(m.category, m.incident_term, customers, minutes);
     const { lastInsertRowid } = db.run(
       'INSERT INTO incidents (key, category, term, team, title, first_at, last_at, created_at) VALUES (?,?,?,?,?,?,?,?)',
       key, m.category, m.incident_term, CATEGORIES[m.category].team, title, firstAt, lastAt, nowIso(),
@@ -232,6 +238,19 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
     const incidentId = Number(lastInsertRowid);
     for (const id of conversationIds) attachToIncident(incidentId, id);
     return { incident: db.get('SELECT * FROM incidents WHERE id = ?', incidentId), created: true, conversationIds };
+  }
+
+  // The title follows the incident as more customers report it. The alert
+  // already sent keeps the numbers it was sent with.
+  function refreshIncidentTitle(incidentId) {
+    const inc = db.get('SELECT * FROM incidents WHERE id = ?', incidentId);
+    const { n } = db.get(
+      `SELECT COUNT(DISTINCT ${REPORTER}) AS n FROM messages
+       WHERE category = ? AND incident_term = ? AND conversation_id IN (SELECT id FROM conversations WHERE incident_id = ?)`,
+      inc.category, inc.term, incidentId,
+    );
+    const minutes = Math.round((Date.parse(inc.last_at) - Date.parse(inc.first_at)) / 60000);
+    db.run('UPDATE incidents SET title = ? WHERE id = ?', incidentTitle(inc.category, inc.term, n, minutes), incidentId);
   }
 
   function attachToIncident(incidentId, conversationId) {
@@ -336,7 +355,7 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
       const cols = Object.keys(sets);
       db.run(`UPDATE conversations SET ${cols.map((c) => `${c} = ?`).join(', ')}, updated_at = ? WHERE id = ?`, ...cols.map((c) => sets[c]), nowIso(), id);
       for (const [type, data] of pending) event(id, actor, type, data);
-      if (sets.team) refreshConversation(id);
+      if (sets.team || sets.status === 'waiting_customer' || sets.status === 'resolved') refreshConversation(id);
     });
     const after = getConversationRow(id);
     if (after.urgency === 'critical' && !after.notified_critical_at && after.status !== 'resolved') {
@@ -405,6 +424,8 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
     let list = rows.map((r) => decorate(r, now));
     if (filters.sla === 'overdue') list = list.filter((c) => c.sla.state === 'overdue');
     if (filters.review) list = list.filter((c) => c.needs_review);
+    // The agent UI hides spam and test messages unless asked, like the headline numbers.
+    if (filters.noise === 'hide') list = list.filter((c) => !isNoise(c));
     return list;
   }
 
@@ -455,7 +476,9 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
       routing: { total, rerouted, keptRate: total ? Number(((total - rerouted) / total).toFixed(2)) : null },
       incidents: db.all(`SELECT i.*, (SELECT COUNT(*) FROM conversations c WHERE c.incident_id = i.id) AS conversations,
           (SELECT COUNT(*) FROM conversations c WHERE c.incident_id = i.id AND c.status != 'resolved') AS open_conversations
-        FROM incidents i WHERE i.status = 'open' ORDER BY i.last_at DESC`),
+        FROM incidents i WHERE i.status = 'open'
+          AND EXISTS (SELECT 1 FROM conversations c WHERE c.incident_id = i.id AND c.status != 'resolved')
+        ORDER BY i.last_at DESC`),
     };
   }
 

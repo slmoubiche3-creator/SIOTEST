@@ -49,10 +49,16 @@ const getJson = async (path) => (await fetch(URL_ + path)).json();
   await page.waitForSelector('.row');
   assert((await page.locator('.row').count()) >= 20, 'queue lists the imported conversations');
   assert((await page.textContent('.row:first-child')).includes('Critical'), 'most urgent first');
-  assert(/Stripe payments failing/.test(await page.textContent('#attention .banner')), 'banner: the open Stripe incident is shown above the queue');
+  assert(/Stripe payments failing \(4 customers/.test(await page.textContent('#attention .banner')), 'banner: the open Stripe incident is shown above the queue, with its 4 customers');
   const cards = await page.locator('#attention .card').allTextContents();
   assert(cards.length === 3 && cards.some((t) => /Sarah Martin.*3× no answer|3× no answer.*Sarah Martin/s.test(t)), 'cards: the 3 customers who wrote again without an answer');
   assert(await page.isDisabled('.row:first-child select[name=assignee]'), 'row controls are locked until you say who you are');
+  const unassignedTile = Number(await page.textContent('.tile:has-text("Unassigned") .value'));
+  await page.click('.tile:has-text("Unassigned")');
+  await page.waitForTimeout(400);
+  assert(unassignedTile === 24 && (await page.locator('.row').count()) === unassignedTile, 'a tile counts exactly the rows it opens (spam & test hidden in both)');
+  await page.click('.tile:has-text("Open conversations")');
+  await page.waitForTimeout(400);
   if (OUT) await page.screenshot({ path: `${OUT}/overview.png`, fullPage: false });
 
   await page.click('.row:has-text("Sarah Martin")');

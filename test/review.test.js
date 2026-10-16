@@ -82,3 +82,27 @@ test('an older database file gets the new columns when opened', (t) => {
   db.close();
   assert.ok(columns.includes('reviewed_at') && columns.includes('reviewed_by'));
 });
+
+test('numbers match the lists: spam hidden like in the tiles, answered customers, resolved incidents', async () => {
+  const { triage } = await importBacklog();
+  const s = triage.stats();
+  assert.equal(triage.listConversations({ noise: 'hide' }).length, s.open);
+  assert.equal(triage.listConversations({ noise: 'hide', assignee: '__none' }).length, s.unassigned);
+  assert.equal(triage.listConversations({ noise: 'hide', sla: 'overdue' }).length, s.overdue);
+
+  const repeat = (c) => c.flags.some((f) => f.type === 'repeat_contact');
+  const sarah = triage.listConversations().find((c) => c.sender_label === 'Sarah Martin');
+  const answered = (await triage.updateConversation(sarah.id, { status: 'waiting_customer' }, 'Julien')).conversation;
+  assert.equal(repeat(answered), false, 'no "wrote 3 times without an answer" once answered');
+  assert.equal(answered.urgency, sarah.urgency, 'urgency unchanged');
+  assert.equal(triage.stats().repeatCustomers, 2);
+  await triage.ingest({ received_at: '2026-10-12 08:55', from: 'sarah.martin@gmail.com', message: 'Thanks, checking now.' });
+  assert.equal(repeat(triage.getConversation(sarah.id)), false, 'one new message is not a repeat');
+  await triage.ingest({ received_at: '2026-10-12 08:58', from: 'sarah.martin@gmail.com', message: 'Still broken, please help.' });
+  assert.equal(repeat(triage.getConversation(sarah.id)), true, 'two unanswered messages again');
+
+  const [incident] = triage.stats().incidents;
+  for (const c of triage.listConversations({ incident: incident.id })) await triage.updateConversation(c.id, { status: 'resolved' }, 'Julien');
+  assert.equal(triage.stats().incidents.length, 0, 'a fully resolved incident leaves "Open incidents"');
+  assert.equal(triage.listConversations({ incident: incident.id, status: 'all' }).length, 4, 'its conversations are kept');
+});
