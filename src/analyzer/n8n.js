@@ -32,6 +32,10 @@ export function createN8nEngine({ url, secret, fetchImpl = fetch, timeoutMs = 60
         throw Object.assign(new Error(`n8n answered HTTP ${res.status}${detail ? `: ${detail}` : ''}`), { status: res.status });
       }
       if (!data || typeof data !== 'object') throw new Error('n8n did not answer with JSON');
+      // The workflow reports AI failures as { error } (n8n Cloud hides the body of 5xx answers).
+      if (data.error && !data.output && !data.category) {
+        throw Object.assign(new Error(`n8n: ${typeof data.error === 'string' ? data.error : JSON.stringify(data.error)}`), { status: 502 });
+      }
       // A Structured Output Parser wraps the result in { output: ... }.
       return validate(data.output ?? data);
     },

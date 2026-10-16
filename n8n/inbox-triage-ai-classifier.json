@@ -132,7 +132,7 @@
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ error: $json.error?.message ?? $json.error ?? \"The AI step failed\" }) }}",
         "options": {
-          "responseCode": 502
+          "responseCode": 200
         }
       }
     }

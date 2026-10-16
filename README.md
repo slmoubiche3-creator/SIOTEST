@@ -12,7 +12,7 @@ Requires Node.js 22.13 or newer. Nothing else: no build step, no database server
 
 ```bash
 npm start          # http://localhost:3000, imports data/requests-backlog.csv on first run
-npm test           # 48 automated tests
+npm test           # 49 automated tests
 npm run eval       # accuracy against human labels (see "How I tested it")
 npm run reset      # delete the local database to start again
 ```
@@ -90,17 +90,17 @@ The merge rules (`src/analyzer/index.js`):
 
 n8n is great for the plumbing, so the tool uses it where it helps and keeps the triage logic in code:
 
-- **The AI call, through n8n (built).** `n8n/inbox-triage-ai-classifier.json` is a ready-to-import workflow: Webhook (Header Auth) → Prepare Prompt → Basic LLM Chain with a model node (OpenAI `gpt-5-mini` by default) and a Structured Output Parser → Respond to Webhook (or a clean `502` if the AI fails). The tool sends its own instructions and the message, n8n answers with the same JSON as the Anthropic engine, and the tool still applies its rules and guardrails. **Switching provider is done in n8n by swapping the model node**, with keys stored in n8n credentials.
+- **The AI call, through n8n (built).** `n8n/inbox-triage-ai-classifier.json` is a ready-to-import workflow: Webhook (Header Auth) → Prepare Prompt → Basic LLM Chain with a model node (OpenAI `gpt-5-mini` by default) and a Structured Output Parser → Respond to Webhook (or `{ "error": ... }` if the AI fails). The tool sends its own instructions and the message, n8n answers with the same JSON as the Anthropic engine, and the tool still applies its rules and guardrails. **Switching provider is done in n8n by swapping the model node**, with keys stored in n8n credentials.
 
   Setup: import the file in n8n, select your AI credential on the model node, create a Header Auth credential on the webhook (name `X-Triage-Secret`, value = a long random secret), publish, then paste the production webhook URL and the same secret in Inbox Triage → Settings → n8n workflow. The tool sends one test message before switching on.
 - **In front (next step)**: Gmail / IMAP trigger, Crisp or Intercom webhooks, form tools → HTTP Request node → `POST /api/messages`.
 - **Behind (next step)**: the Slack alerts could be routed through n8n to add PagerDuty, SMS, or a FreeScout ticket.
 
-The triage logic itself (grouping, deadlines, incidents, guardrails, the agent screens) is easier to test, review and version as code: it is covered by 48 tests that run in about a second.
+The triage logic itself (grouping, deadlines, incidents, guardrails, the agent screens) is easier to test, review and version as code: it is covered by 49 tests that run in about a second.
 
 ## How I tested it
 
-- **Automated tests** (`npm test`, 48 tests): parsing of every date and sender format in the backlog, topic and urgency rules, deadlines, language detection, redaction, the AI engine with a fake client (request shape, guardrails, fallback on error / refusal / invalid output), the full import (26 conversations, 1 incident, 7 alerts), incident rules (3 different customers within 3 hours), the agent workflow, the HTTP API (token, validation, CSV upload, Slack delivery to a local fake webhook, static file safety), and the AI settings (bad key refused, key never returned, model tested before use, admin token, environment key wins, settings kept after a restart), and the n8n engine against a local fake n8n (secret header, `{ output }` format, AI failure in n8n falls back to the rules, wrong secret refused, secret never returned).
+- **Automated tests** (`npm test`, 49 tests): parsing of every date and sender format in the backlog, topic and urgency rules, deadlines, language detection, redaction, the AI engine with a fake client (request shape, guardrails, fallback on error / refusal / invalid output), the full import (26 conversations, 1 incident, 7 alerts), incident rules (3 different customers within 3 hours), the agent workflow, the HTTP API (token, validation, CSV upload, Slack delivery to a local fake webhook, static file safety), and the AI settings (bad key refused, key never returned, model tested before use, admin token, environment key wins, settings kept after a restart), and the n8n engine against a local fake n8n (secret header, `{ output }` format, AI failure in n8n falls back to the rules, wrong secret refused, secret never returned).
 - **In n8n**: the workflow was validated by n8n and run once with simulated data (no AI call), checking the prompt preparation and the JSON answer.
 - **Accuracy** (`npm run eval`):
   - On the 30 backlog messages: 30/30 team, 30/30 urgency, 30/30 language. **This number is flattering**: I tuned the rules on these messages.

@@ -22,6 +22,9 @@ const fail = (status, message) => Object.assign(new Error(message), { status });
 const friendlyN8n = (err) => {
   if (err.status === 401 || err.status === 403) return `n8n refused the secret. Check the Header Auth credential on the webhook (name ${N8N_SECRET_HEADER}).`;
   if (err.status === 404) return 'n8n does not know this URL. Is the workflow published? Use the production URL, not the test URL.';
+  if (err.status === 502 && /authori[sz]ation|credential|api key|invalid.*key|quota|billing|insufficient/i.test(err.message)) {
+    return `The AI step in n8n failed: ${err.message.replace(/^n8n: /, '')}. Check the AI credential used by the model node in n8n (valid key, credit left).`;
+  }
   if (err.status === 502) return `The AI step in n8n failed. ${err.message}`;
   return err.message;
 };

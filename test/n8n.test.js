@@ -21,6 +21,7 @@ before(async () => {
       res.setHeader('content-type', 'application/json');
       if (req.headers['x-triage-secret'] !== SECRET) { res.statusCode = 403; return res.end(JSON.stringify({ message: 'Authorization data is wrong!' })); }
       if (mode === 'ai-error') { res.statusCode = 502; return res.end(JSON.stringify({ error: 'OpenAI quota exceeded' })); }
+      if (mode === 'ai-error-200') return res.end(JSON.stringify({ error: 'Authorization failed - please check your credentials' }));
       res.end(JSON.stringify({ output: answer }));
     });
   });
@@ -82,6 +83,18 @@ test('settings: connect n8n (tested first), secret never returned, then disconne
     assert.equal(off.body.enabled, false);
     assert.equal(off.body.provider, 'anthropic');
   } finally { app.close(); }
+});
+
+test('settings: an AI credential problem in n8n is explained clearly', async () => {
+  mode = 'ai-error-200';
+  const app = await createApp({ env: {}, clock: fixedClock() });
+  await new Promise((r) => app.server.listen(0, r));
+  try {
+    const res = await fetch(`http://localhost:${app.server.address().port}/api/settings/n8n`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url, secret: SECRET }) });
+    const body = await res.json();
+    assert.equal(res.status, 400);
+    assert.match(body.error, /Authorization failed.*Check the AI credential used by the model node in n8n/);
+  } finally { app.close(); mode = 'ok'; }
 });
 
 test('settings: bad n8n URL is refused before any call', async () => {
