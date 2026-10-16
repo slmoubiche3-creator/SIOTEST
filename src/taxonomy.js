@@ -52,6 +52,10 @@ export const LOW_ONLY = new Set(['spam', 'test_noise', 'thanks']);
 // Categories that never get a "second team": a fake CEO "locked out" is not a Support case.
 export const NO_SECONDARY = new Set(['social_engineering', 'spam', 'test_noise']);
 
+// Flags that put a conversation in the "Needs review" queue: the tool is
+// unsure about something a person should check (sender, date, routing, AI).
+export const REVIEW_FLAGS = ['no_sender', 'invalid_sender', 'date_guessed', 'low_confidence', 'engines_disagree', 'prompt_injection'];
+
 // Response-time targets (time to first answer), in hours.
 export const SLA_HOURS = { critical: 1, high: 4, normal: 24, low: 72 };
 

@@ -27,6 +27,7 @@ const state = {
   meta: null, offset: 0, stats: null, list: [], base: [], notifications: [],
   seenAlerts: Number(storage.get('seenAlerts') || 0), me: storage.get('me') || '',
   drawerSig: null, drafts: new Map(), // unsent notes survive live refreshes
+  listStale: false, selfReset: false,
 };
 
 async function api(path, opts = {}) {
@@ -82,10 +83,11 @@ function deadlineChip(c) {
   return h('span', { class: `chip ${d <= 3 ? 'bad' : 'warn'}`, title: `Customer deadline: "${c.deadline_phrase}" (${fmtDate(c.deadline_at, false)})` }, '⏳ ', text);
 }
 const FLAG_CHIPS = {
-  repeat_contact: (f) => ['bad', `↻ ${f.label.match(/\d+/)?.[0] ?? ''}× no answer`],
+  repeat_contact: (f) => ['bad', `↻ ${repeatCount(f)}× no answer`],
   prompt_injection: () => ['bad', '🛡 Tried to steer the AI'],
   credential_request: () => ['bad', '🛡 Asks for credentials'],
   no_sender: () => ['warn', '✉ No sender'],
+  date_guessed: () => ['warn', '📅 Date guessed'],
   invalid_sender: () => ['warn', '✉ Invalid email'],
   self_declared_urgency: () => ['info', '"Urgent" claimed, no impact'],
   spam: () => ['info', 'Spam'],
@@ -93,6 +95,7 @@ const FLAG_CHIPS = {
   low_confidence: () => ['warn', '? Check routing'],
   engines_disagree: () => ['warn', '? AI and rules disagree'],
 };
+const repeatCount = (f) => f.count ?? Number(f.label.match(/\d+/)?.[0] ?? 0);
 function flagChips(c) {
   return c.flags.filter((f) => FLAG_CHIPS[f.type]).map((f) => {
     const [kind, text] = FLAG_CHIPS[f.type](f);
@@ -108,6 +111,7 @@ function parseHash() {
   let i = 0;
   if (parts[i] === 'team') { r.view = 'team'; r.team = parts[i + 1]; i += 2; }
   else if (parts[i] === 'mine') { r.view = 'mine'; i += 1; }
+  else if (parts[i] === 'review') { r.view = 'review'; i += 1; }
   else if (parts[i] === 'incident') { r.view = 'incident'; r.incident = parts[i + 1]; i += 2; }
   else if (parts[i] === 'all') i += 1;
   if (parts[i] === 'c') r.conv = Number(parts[i + 1]);
@@ -116,6 +120,7 @@ function parseHash() {
 function viewHash(r = parseHash()) {
   if (r.view === 'team') return `#/team/${r.team}`;
   if (r.view === 'mine') return '#/mine';
+  if (r.view === 'review') return '#/review';
   if (r.view === 'incident') return `#/incident/${r.incident}`;
   return '#/all';
 }
@@ -127,6 +132,7 @@ function viewParams(r = parseHash()) {
   const p = new URLSearchParams();
   if (r.view === 'team') p.set('team', r.team);
   if (r.view === 'mine') p.set('assignee', state.me || '__nobody__');
+  if (r.view === 'review') p.set('review', '1');
   if (r.view === 'incident') { p.set('incident', r.incident); p.set('status', 'all'); }
   return p;
 }
@@ -161,6 +167,7 @@ function render() {
   const r = parseHash();
   renderNav(r);
   renderTiles();
+  renderAttention(r);
   renderList(r);
   renderAlertsCount();
   if (r.conv) renderDrawer(r.conv); else closeDrawer(false);
@@ -171,6 +178,7 @@ function renderNav(r) {
   const countEl = (open, crit) => h('span', { class: 'count' }, crit ? h('span', { class: 'crit', title: `${crit} critical` }, `🔴 ${crit}`) : null, String(open));
   $('#count-all').replaceChildren(countEl(s.open, s.critical));
   $('#count-mine').replaceChildren(state.me ? String(s.byAssignee[state.me] ?? 0) : '');
+  $('#count-review').replaceChildren(String(s.needsReview));
   $('#teamNav').replaceChildren(...state.meta.teams.map((t) => h('button', {
     class: 'nav-item', 'aria-current': String(r.view === 'team' && r.team === t.id), onclick: () => { location.hash = `#/team/${t.id}`; closeMenu(); },
   }, t.name, countEl(s.byTeam[t.id].open, s.byTeam[t.id].critical))));
@@ -179,10 +187,12 @@ function renderNav(r) {
     ? s.incidents.map((i) => h('button', { class: 'nav-item', 'aria-current': String(r.view === 'incident' && r.incident === String(i.id)), onclick: () => { location.hash = `#/incident/${i.id}`; closeMenu(); } },
       h('span', {}, '⚡ ', i.title)))
     : [h('p', { class: 'muted small' }, 'None right now')]));
-  const titles = { all: 'All teams', mine: state.me ? `My queue (${state.me})` : 'My queue: choose who you are (top right)' };
+  const titles = { all: 'All teams', mine: state.me ? `My queue (${state.me})` : 'My queue: choose who you are (top right)', review: 'Needs review' };
   const incident = s.incidents.find((i) => String(i.id) === r.incident);
   $('#viewTitle').textContent = r.view === 'team' ? `${teamName(r.team)} team`
     : r.view === 'incident' ? (incident ? `⚡ ${incident.title}` : `Incident #${r.incident}`) : titles[r.view];
+  $('#viewHint').hidden = r.view !== 'review';
+  $('#viewHint').textContent = 'Conversations the tool is not sure about: no or invalid sender, a guessed date, uncertain routing, AI and rules disagreeing, or text trying to steer the AI. Open one, fix what is wrong, then mark it as checked.';
 }
 
 function renderTiles() {
@@ -204,18 +214,82 @@ function renderTiles() {
     h('div', { class: 'label' }, t.label), h('div', { class: 'value' }, String(t.value)), h('div', { class: 'hint' }, t.hint))));
 }
 
+// Open incidents (banner) and customers who wrote again without an answer
+// (cards), for the current view. Hidden in the incident and review views.
+function renderAttention(r) {
+  const box = $('#attention');
+  const open = state.base.filter((c) => c.status !== 'resolved');
+  const incidents = r.view === 'incident' || r.view === 'review' ? [] : state.stats.incidents
+    .map((i) => ({ ...i, convs: open.filter((c) => c.incident_id === i.id) }))
+    .filter((i) => i.convs.length);
+  const chasing = r.view === 'incident' || r.view === 'review' ? [] : open
+    .filter((c) => ['new', 'in_progress'].includes(c.status) && c.flags.some((f) => f.type === 'repeat_contact'))
+    .sort((a, b) => urgencyRank(b.urgency) - urgencyRank(a.urgency) || b.message_count - a.message_count);
+  box.hidden = !incidents.length && !chasing.length;
+  if (box.hidden) return;
+  const MAX_CARDS = 6;
+  fill(box,
+    incidents.map((i) => {
+      const unassigned = i.convs.filter((c) => !c.assignee).length;
+      return h('div', { class: 'banner', 'data-incident': i.id },
+        h('span', { class: 'banner-icon', 'aria-hidden': 'true' }, '⚡'),
+        h('div', { class: 'banner-text' },
+          h('strong', {}, i.title),
+          h('div', { class: 'small' }, `${i.convs.length} conversation${i.convs.length > 1 ? 's' : ''} still open · ${unassigned ? `${unassigned} unassigned` : 'all assigned'} · first report ${fmtAgo(i.first_at)}`)),
+        h('a', { class: 'btn', href: `#/incident/${i.id}` }, 'See the incident →'));
+    }),
+    chasing.length ? h('div', { class: 'attention-head' },
+      h('h2', {}, `Customers who wrote again (${chasing.length})`),
+      h('span', { class: 'muted small' }, 'still waiting for an answer, most urgent first')) : null,
+    chasing.length ? h('div', { class: 'cards' }, chasing.slice(0, MAX_CARDS).map((c) => {
+      const repeat = c.flags.find((f) => f.type === 'repeat_contact');
+      return h('button', { class: 'card', 'data-id': c.id, onclick: () => openConversation(c.id) },
+        h('div', { class: 'card-top' }, urgencyBadge(c.urgency), h('span', { class: 'chip bad', title: repeat.label }, `↻ ${repeatCount(repeat)}× no answer`), deadlineChip(c)),
+        h('span', { class: 'cust' }, c.sender_label),
+        h('span', { class: 'card-summary' }, c.summary),
+        h('span', { class: 'sub' }, `${teamName(c.team)} · ${c.assignee ?? 'nobody owns it'} · last message ${fmtAgo(c.last_received_at)}`));
+    })) : null,
+    chasing.length > MAX_CARDS ? h('p', { class: 'muted small' }, `+ ${chasing.length - MAX_CARDS} more in the queue below`) : null);
+}
+
+const urgencyRank = (u) => ['low', 'normal', 'high', 'critical'].indexOf(u);
+
+// Owner and status, changed right in the row (same rules as the panel).
+function rowActions(c) {
+  const team = state.meta.teams.find((t) => t.id === c.team);
+  const members = [...new Set([...(team?.members ?? []), c.assignee].filter(Boolean))];
+  const disabled = !state.me;
+  const onchange = (key) => (e) => {
+    const value = e.target.value;
+    e.target.blur(); // lets the live refresh redraw the row
+    changeConversation(c.id, { [key]: key === 'assignee' ? value || null : value });
+  };
+  return h('div', { class: 'row-actions', title: disabled ? 'Choose who you are (top right) to assign or change status' : null },
+    h('select', { name: 'assignee', 'aria-label': `Owner of conversation #${c.id}`, disabled, onchange: onchange('assignee') },
+      h('option', { value: '', selected: !c.assignee }, 'Unassigned'),
+      members.map((m) => h('option', { value: m, selected: m === c.assignee }, m))),
+    h('select', { name: 'status', 'aria-label': `Status of conversation #${c.id}`, disabled, onchange: onchange('status') },
+      Object.entries(STATUS_LABEL).map(([v, text]) => h('option', { value: v, selected: v === c.status }, text))));
+}
+
 function renderList(r) {
+  // Never redraw under an open dropdown: a live refresh would close it.
+  if (document.activeElement?.tagName === 'SELECT' && $('#list').contains(document.activeElement)) { state.listStale = true; return; }
+  state.listStale = false;
   const list = state.list;
   if (!list.length) {
-    $('#list').replaceChildren(h('div', { class: 'empty' }, r.view === 'mine' && !state.me ? 'Choose who you are (top right) to see your queue.' : 'Nothing here. 🎉'));
+    const empty = r.view === 'mine' && !state.me ? 'Choose who you are (top right) to see your queue.'
+      : r.view === 'review' ? 'Nothing to review. ✓' : 'Nothing here. 🎉';
+    $('#list').replaceChildren(h('div', { class: 'empty' }, empty));
     return;
   }
   $('#list').replaceChildren(...list.map((c) => {
     const secondary = c.secondary_teams.length ? h('div', { class: 'sub', title: 'Also concerns these teams' }, `+ ${c.secondary_teams.map(teamName).join(', ')}`) : null;
-    return h('button', { class: `row${r.conv === c.id ? ' selected' : ''}`, onclick: () => openConversation(c.id), 'data-id': c.id },
+    // A click anywhere on the row opens the conversation, except on its controls.
+    return h('div', { class: `row${r.conv === c.id ? ' selected' : ''}`, 'data-id': c.id, onclick: (e) => { if (!e.target.closest('select, a, button')) openConversation(c.id); } },
       h('div', {}, urgencyBadge(c.urgency)),
       h('div', {},
-        h('div', { class: 'cust', title: c.sender_label }, c.sender_label),
+        h('a', { class: 'cust', href: `${viewHash(r)}/c/${c.id}`, title: c.sender_label }, c.sender_label),
         h('div', { class: 'sub' }, `${c.message_count > 1 ? `${c.message_count} messages · ` : ''}${langName(c.language)} · ${fmtAgo(c.last_received_at)}`)),
       h('div', { class: 'summary' },
         h('div', { class: 'summary-text' }, c.summary),
@@ -224,8 +298,21 @@ function renderList(r) {
           deadlineChip(c), flagChips(c))),
       h('div', {}, h('div', {}, teamName(c.team)), secondary),
       h('div', {}, slaView(c)),
-      h('div', {}, h('div', { class: c.assignee ? '' : 'muted' }, c.assignee ?? 'Unassigned'), h('div', { class: 'sub' }, STATUS_LABEL[c.status])));
+      rowActions(c));
   }));
+}
+
+async function changeConversation(id, changes) {
+  try {
+    await api(`/api/conversations/${id}`, { method: 'PATCH', body: JSON.stringify({ actor: state.me, ...changes }) });
+    await refresh();
+    return true;
+  } catch (err) {
+    toast('Change refused', err.message);
+    state.drawerSig = null; // show the real values again, not the refused ones
+    await refresh();
+    return false;
+  }
 }
 
 function renderAlertsCount() {
@@ -251,22 +338,18 @@ async function renderDrawer(id) {
   const scrollTop = drawer.hidden ? 0 : drawer.scrollTop;
   const canEdit = Boolean(state.me);
   const team = state.meta.teams.find((t) => t.id === c.team);
-  const change = async (changes) => {
-    try {
-      await api(`/api/conversations/${c.id}`, { method: 'PATCH', body: JSON.stringify({ actor: state.me, ...changes }) });
-      await refresh();
-    } catch (err) {
-      toast('Change refused', err.message);
-      state.drawerSig = null; // show the real value again, not the refused one
-      renderDrawer(c.id);
-    }
-  };
+  const change = (changes) => changeConversation(c.id, changes);
   const select = (label, value, options, onchange) => h('label', {}, label,
     h('select', { disabled: !canEdit, onchange: (e) => onchange(e.target.value) },
       options.map(([v, text]) => h('option', { value: v, selected: v === (value ?? '') }, text))));
 
   const dangerFlags = c.flags.filter((f) => ['credential_request', 'prompt_injection'].includes(f.type));
-  const warnFlags = c.flags.filter((f) => ['no_sender', 'invalid_sender', 'deadline_passed', 'low_confidence', 'engines_disagree', 'self_declared_urgency', 'repeat_contact'].includes(f.type));
+  const warnFlags = c.flags.filter((f) => ['no_sender', 'invalid_sender', 'date_guessed', 'deadline_passed', 'low_confidence', 'engines_disagree', 'self_declared_urgency', 'repeat_contact'].includes(f.type));
+  const reviewPart = c.needs_review
+    ? h('div', { class: 'chips', style: 'margin-top:8px' },
+      h('button', { class: 'btn', disabled: !canEdit, onclick: () => change({ reviewed: true }) }, '✓ Mark as checked'),
+      h('span', { class: 'muted small' }, 'Removes it from "Needs review" once the doubts above are cleared.'))
+    : c.reviewed_at ? h('div', { class: 'small', style: 'margin-top:6px' }, `✓ Checked by ${c.reviewed_by} ${fmtAgo(c.reviewed_at)}`) : null;
   const engineErrors = [...new Set(c.messages.map((m) => m.engine_error).filter(Boolean))];
 
   fill(drawer,
@@ -279,7 +362,7 @@ async function renderDrawer(id) {
       c.incident ? h('a', { class: 'chip bad', href: `#/incident/${c.incident.id}` }, `⚡ Incident #${c.incident.id}`) : null, deadlineChip(c)),
 
     dangerFlags.length ? h('div', { class: 'section callout bad' }, h('strong', {}, '🛡 Security warning'), h('ul', {}, dangerFlags.map((f) => h('li', {}, f.label)))) : null,
-    warnFlags.length ? h('div', { class: 'section callout warn' }, h('strong', {}, 'Heads-up'), h('ul', {}, warnFlags.map((f) => h('li', {}, f.label)))) : null,
+    warnFlags.length || c.needs_review ? h('div', { class: 'section callout warn', 'data-tour': 'review' }, h('strong', {}, 'Heads-up'), h('ul', {}, warnFlags.map((f) => h('li', {}, f.label))), reviewPart) : null,
 
     h('div', { class: 'section', 'data-tour': 'actions' }, h('h3', {}, 'Actions'),
       canEdit ? null : h('p', { class: 'callout warn' }, 'Choose who you are (top right) to assign or change status.'),
@@ -360,6 +443,8 @@ function describeEvent(e) {
     case 'urgency_changed': return `Urgency: ${d.from} → ${d.to}`;
     case 'incident_linked': return `Linked to incident #${d.incidentId}`;
     case 'note': return h('span', {}, '📝 ', d.text);
+    case 'reviewed': return 'Marked as checked (left "Needs review")';
+    case 'review_reopened': return 'Back in "Needs review"';
     default: return e.type;
   }
 }
@@ -522,7 +607,36 @@ function renderSettings() {
       h('p', { class: 'muted small' }, 'The key is never shown again, never sent back to the browser and never saved in Git.')),
     tab !== 'anthropic' ? null : h('div', { class: 'section' }, h('p', { class: 'step-title' }, '2 · Model'), modelPart,
       h('p', { class: 'muted small' }, 'One key works for every model; models differ in price and speed. The list comes from Anthropic for your key. Before switching, the tool sends one short test message to check that the model works.')),
+    h('div', { class: 'section', 'data-tour': 'reset' }, h('h3', {}, 'Demo data'),
+      h('p', { class: 'muted small' }, 'Your changes are kept between visits and restarts. To start the demo again, this deletes every conversation, message, alert, incident, note and history entry, then imports data/requests-backlog.csv again. The AI settings are kept.'),
+      h('button', { class: 'btn danger', disabled: busy, onclick: resetDemoData }, 'Reset demo data')),
   );
+}
+
+function resetDemoData() {
+  const ok = confirm('Reset the demo data?\n\nAll conversations, messages, alerts, incidents, notes and history will be deleted, then data/requests-backlog.csv is imported again. The AI settings are kept.');
+  if (!ok) return;
+  state.selfReset = true;
+  settingsAction(async () => {
+    try {
+      const res = await adminApi('/api/demo/reset', { method: 'POST' });
+      closeSettings();
+      onDataReset();
+      toast('Demo data reset', `${res.created} messages imported again. AI settings kept.`);
+    } finally {
+      state.selfReset = false;
+    }
+  });
+}
+
+// After a demo reset (from this page or another one): ids start again, so
+// forget which alerts were seen and any unsent note, and close the open panel.
+function onDataReset() {
+  state.seenAlerts = 0;
+  storage.set('seenAlerts', '0');
+  state.drafts.clear();
+  closeAlerts();
+  if (parseHash().conv) location.hash = viewHash(); else refresh();
 }
 
 function toast(title, body, onclick) {
@@ -575,13 +689,18 @@ function tourSteps() {
       text: 'Every message from contact forms, email and live chat lands here already analysed: which team, how urgent, which language, and why. This tour takes about 2 minutes. "Today" is simulated as Monday 12 October 2026.' },
     { title: 'The day at a glance', target: '#tiles', ...onList(),
       text: 'Open conversations, critical ones, those past their reply target, unassigned work, customers who wrote again and deadlines coming up. Click a tile to filter the queue.' },
+    { title: 'What needs attention now', target: '#attention', ...onList(),
+      skip: () => !tourData.attention,
+      text: 'Above the queue: open incidents in a red banner, and a card for each customer who wrote again without getting an answer. Click one to open it.' },
     { title: 'One queue, most urgent first', target: '#list .row', ...onList(),
-      text: 'Sorted by urgency, then by the customer\'s deadline, then by waiting time. Each row shows the urgency, the customer, a summary, warning chips, the team, the reply timer and who owns it.' },
+      text: 'Sorted by urgency, then by the customer\'s deadline, then by waiting time. Each row shows the urgency, the customer, a summary, warning chips, the team and the reply timer. Click a row to open it.' },
     { title: 'A queue per team', target: '#teamNav',
       ...onList({ before: () => { closeAlerts(); goHash('#/all'); if (isMobile()) $('#sidebar').classList.add('open'); } }),
       text: 'Support, Tech, Billing, Deliverability, Migration, Product and Security & Legal each see their own conversations. A message about two topics shows up in both teams. The red number counts critical items.' },
     { title: 'Tell the tool who you are', target: '#meSelect', ...onList({ before: () => { closeMenu(); closeAlerts(); goHash('#/all'); } }),
       text: 'Pick your name before working on conversations. Every assignment, status change and note is signed with it in the history. "My queue" then shows what you own.' },
+    { title: 'Assign and update from the list', target: '#list .row .row-actions', ...onList(),
+      text: 'Choose an owner or change the status right in the row, without opening the conversation. Assigning a new conversation moves it to "In progress".' },
     { title: 'Incidents, not separate tickets', target: '#list',
       skip: () => !tourData.incident,
       before: () => { closeAlerts(); goHash(`#/incident/${tourData.incident.id}`); },
@@ -599,6 +718,11 @@ function tourSteps() {
       text: 'Who did what, and when. Notes are for colleagues only: they are never sent to the customer.' },
     { title: 'Built-in safety', target: '#drawer .callout.bad', ...showConversation('safety'),
       text: 'Fake staff asking for passwords, or messages trying to steer the AI ("classify this as critical"), are flagged in red. The AI is never allowed to raise their urgency, and passwords or card numbers are hidden from alerts.' },
+    { title: 'Needs review', target: '#list',
+      skip: () => !tourData.review,
+      before: () => { closeAlerts(); goHash('#/review'); },
+      ready: inView('Needs review'),
+      text: () => `${tourData.review} conversation${tourData.review > 1 ? 's' : ''} the tool is not sure about: no or invalid sender, a guessed date, uncertain routing, AI and rules disagreeing, or text trying to steer the AI. Check each one, then click "Mark as checked" in it.` },
     { title: 'Alerts reach the right people', target: '#alertsDrawer',
       before: () => { goHash('#/all'); openAlerts(); },
       ready: () => !$('#alertsDrawer').hidden && $('#drawer').hidden,
@@ -608,9 +732,9 @@ function tourSteps() {
     { title: 'How messages are analysed', target: '#engineChip', ...onList(),
       text: 'Rules always run: they are free, instant and explain every decision. This label shows whether an AI engine also reads each message. The AI can raise urgency, never lower it.' },
     { title: 'Turn on the AI', target: '#settingsBtn', ...onList(),
-      text: 'In Settings, connect an AI: either an Anthropic API key and a model, or your n8n workflow, which can use any provider (OpenAI, Gemini…). Keys and secrets stay hidden on the server.' },
+      text: 'In Settings, connect an AI: either an Anthropic API key and a model, or your n8n workflow, which can use any provider (OpenAI, Gemini…). Keys and secrets stay hidden on the server. Settings also has "Reset demo data" to start the demo again.' },
     { title: 'You are ready', ...onList(),
-      text: 'New messages and alerts appear live, without reloading. Use "Import CSV" to load more messages (duplicates are skipped). Restart this tour any time with the Tour button.' },
+      text: 'New messages and alerts appear live, without reloading, and your changes are kept between visits. Use "Import CSV" to load more messages (duplicates are skipped). Restart this tour any time with the Tour button.' },
   ];
 }
 
@@ -625,6 +749,8 @@ async function startTour() {
   const [open, stats] = await Promise.all([api('/api/conversations'), api('/api/stats')]);
   const byLastFirst = [...open].sort((a, b) => b.message_count - a.message_count);
   Object.assign(tourData, {
+    attention: stats.incidents.some((i) => i.open_conversations) || open.some((c) => ['new', 'in_progress'].includes(c.status) && c.flags.some((f) => f.type === 'repeat_contact')),
+    review: stats.needsReview,
     incident: stats.incidents[0] ?? null,
     repeat: byLastFirst.find((c) => c.flags.some((f) => f.type === 'repeat_contact') && c.deadline_at) ?? byLastFirst[0] ?? null,
     safety: open.find((c) => c.flags.some((f) => f.type === 'credential_request' || f.type === 'prompt_injection')) ?? null,
@@ -658,10 +784,15 @@ async function init() {
     e.target.value = '';
   });
   window.addEventListener('hashchange', refresh);
+  $('#list').addEventListener('focusout', () => setTimeout(() => { if (state.listStale) renderList(parseHash()); }, 0));
 
   // Live updates: new messages and alerts arrive without reloading.
   const events = new EventSource('/api/events');
   events.addEventListener('conversation', scheduleRefresh);
+  events.addEventListener('reset', () => {
+    if (!state.selfReset) toast('Demo data was reset', 'The original messages were imported again.');
+    onDataReset();
+  });
   events.addEventListener('notification', (e) => {
     const n = JSON.parse(e.data);
     toast(`🚨 ${n.title}`, n.body.split('\n')[0], () => n.conversation_id && openConversation(n.conversation_id));

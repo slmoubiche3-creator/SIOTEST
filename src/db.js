@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS conversations (
   responded_at TEXT,
   resolved_at TEXT,
   notified_critical_at TEXT,
+  reviewed_at TEXT,
+  reviewed_by TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -117,6 +119,9 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 `;
 
+// Columns added after the first version: older database files get them on open.
+const ADDED_COLUMNS = { conversations: { reviewed_at: 'TEXT', reviewed_by: 'TEXT' } };
+
 const JSON_COLUMNS = new Set(['secondary_teams', 'flags', 'reasons', 'date_notes', 'recipients', 'channels', 'data']);
 
 // Rows come back as null-prototype objects with JSON stored as text.
@@ -133,6 +138,10 @@ export function openDb(file = ':memory:') {
   db.exec('PRAGMA foreign_keys = ON;');
   if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
   db.exec(SCHEMA);
+  for (const [table, columns] of Object.entries(ADDED_COLUMNS)) {
+    const existing = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+    for (const [name, type] of Object.entries(columns)) if (!existing.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  }
   const stmts = new Map();
   const prep = (sql) => {
     if (!stmts.has(sql)) stmts.set(sql, db.prepare(sql));

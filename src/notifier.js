@@ -4,14 +4,18 @@
 import { teamName } from './taxonomy.js';
 import { redactSecrets } from './redact.js';
 
-export function createNotifier({ db, teams, clock, broadcast = () => {}, appUrl = 'http://localhost:3000', env = process.env, fetchImpl = fetch }) {
+// `muted()` returns a reason (e.g. "demo reset") when Slack must stay quiet.
+export function createNotifier({ db, teams, clock, broadcast = () => {}, appUrl = 'http://localhost:3000', env = process.env, fetchImpl = fetch, muted = () => null }) {
   async function notify({ kind, team, conversationId = null, incidentId = null, title, body, extraRecipients = [], slack = true }) {
     const t = teams[team] ?? {};
     const recipients = [...new Set([t.oncall, t.lead, ...extraRecipients].filter(Boolean))];
     const safeBody = redactSecrets(body);
     const channels = { in_app: 'sent' };
     const webhook = env[`SLACK_WEBHOOK_URL_${team.toUpperCase()}`] || env.SLACK_WEBHOOK_URL;
-    if (slack && webhook) {
+    const mutedReason = muted();
+    if (slack && webhook && mutedReason) {
+      channels.slack = `not sent (${mutedReason})`;
+    } else if (slack && webhook) {
       const link = conversationId ? `${appUrl}/#/c/${conversationId}` : appUrl;
       const text = [
         `${kind.startsWith('incident') ? ':rotating_light:' : ':red_circle:'} *${title}*`,

@@ -18,12 +18,20 @@ import { TEAMS, URGENCIES, STATUSES, CATEGORIES, SLA_HOURS } from './taxonomy.js
 const MAX_BODY = 5 * 1024 * 1024;
 const STATIC_TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 
+const readCsvFile = (file) => parseCsv(fs.readFileSync(file, 'utf8')).map(mapColumns);
+
 // `ai` injects an engine directly (tests); otherwise the engine comes from
 // Settings / environment. `aiClientFactory` replaces the Anthropic client (tests).
-export async function createApp({ dbPath = ':memory:', env = process.env, ai, aiClientFactory = createAnthropicClient, clock = createClock(env.APP_NOW), teams = loadTeams(), fetchImpl } = {}) {
+// `backlogCsv` is the demo file imported on first start and by "Reset demo data".
+export async function createApp({ dbPath = ':memory:', env = process.env, ai, aiClientFactory = createAnthropicClient, clock = createClock(env.APP_NOW), teams = loadTeams(), fetchImpl,
+  backlogCsv = env.BACKLOG_CSV || path.join(ROOT, 'data', 'requests-backlog.csv') } = {}) {
   const db = openDb(dbPath);
   const sseClients = new Set();
+  // While the demo data is re-imported, open pages get one "reset" event at
+  // the end instead of a toast per alert, and Slack is not pinged again.
+  let resetting = false;
   const broadcast = (type, data) => {
+    if (resetting) return;
     const payload = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of sseClients) res.write(payload);
   };
@@ -31,7 +39,7 @@ export async function createApp({ dbPath = ':memory:', env = process.env, ai, ai
   const aiSettings = createAiSettings({ db, env, analyzer, clock, clientFactory: aiClientFactory });
   if (ai === undefined) await aiSettings.apply();
   const appUrl = env.APP_URL || `http://localhost:${env.PORT || 3000}`;
-  const notifier = createNotifier({ db, teams, clock, broadcast, appUrl, env, ...(fetchImpl && { fetchImpl }) });
+  const notifier = createNotifier({ db, teams, clock, broadcast, appUrl, env, muted: () => (resetting ? 'demo reset' : null), ...(fetchImpl && { fetchImpl }) });
   const triage = createTriage({ db, analyzer, notifier, clock, teams, broadcast });
 
   const meta = () => ({
@@ -58,7 +66,33 @@ export async function createApp({ dbPath = ':memory:', env = process.env, ai, ai
     ? sameSecret(req.headers['x-admin-token'], env.ADMIN_TOKEN)
     : ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress));
   const adminRefused = () => (env.ADMIN_TOKEN ? 'Wrong or missing admin token.'
-    : 'Settings can only be changed on the computer running the tool (or set ADMIN_TOKEN).');
+    : 'Settings and demo reset only work on the computer running the tool (or set ADMIN_TOKEN).');
+
+  // First start only: an empty database gets the demo backlog. Data is never
+  // reset on start or page load, only by "Reset demo data".
+  async function importIfEmpty() {
+    if (db.get('SELECT COUNT(*) AS n FROM messages').n > 0 || !fs.existsSync(backlogCsv)) return null;
+    return triage.importRecords(readCsvFile(backlogCsv));
+  }
+
+  // "Reset demo data": back to the original backlog. The file is read first,
+  // so a missing or empty file never leaves an empty inbox.
+  async function resetDemo() {
+    if (resetting) throw Object.assign(new Error('A reset is already running.'), { status: 409 });
+    let records;
+    try { records = readCsvFile(backlogCsv); } catch { records = []; }
+    if (!records.length) throw Object.assign(new Error(`Demo file not found or empty: ${path.basename(backlogCsv)}`), { status: 422 });
+    resetting = true;
+    let result;
+    try {
+      triage.clearAll();
+      result = await triage.importRecords(records);
+    } finally {
+      resetting = false;
+    }
+    broadcast('reset', result);
+    return result;
+  }
 
   async function handle(req, res) {
     const url = new URL(req.url, 'http://local');
@@ -85,6 +119,10 @@ export async function createApp({ dbPath = ':memory:', env = process.env, ai, ai
         return send(err.status, { error: err.message });
       }
       return send(404, { error: 'Not found' });
+    }
+    if (req.method === 'POST' && p === '/api/demo/reset') {
+      if (!adminOk(req)) return send(403, { error: adminRefused() });
+      return send(200, await resetDemo());
     }
     if (req.method === 'GET' && p === '/api/stats') return send(200, triage.stats());
     if (req.method === 'GET' && p === '/api/notifications') return send(200, triage.listNotifications());
@@ -120,7 +158,7 @@ export async function createApp({ dbPath = ':memory:', env = process.env, ai, ai
     }
     if (req.method === 'PATCH' && idMatch && !idMatch[2]) {
       const { actor, ...changes } = await readJson(req);
-      const allowed = Object.fromEntries(Object.entries(changes).filter(([k]) => ['team', 'urgency', 'assignee', 'status', 'reason'].includes(k)));
+      const allowed = Object.fromEntries(Object.entries(changes).filter(([k]) => ['team', 'urgency', 'assignee', 'status', 'reason', 'reviewed'].includes(k)));
       const result = await triage.updateConversation(Number(idMatch[1]), allowed, actor);
       return result.error ? send(result.status, { error: result.error }) : send(200, result.conversation);
     }
@@ -144,7 +182,7 @@ export async function createApp({ dbPath = ':memory:', env = process.env, ai, ai
     });
   });
 
-  return { server, db, triage, analyzer, close: () => { for (const r of sseClients) r.end(); server.close(); db.close(); } };
+  return { server, db, triage, analyzer, importIfEmpty, close: () => { for (const r of sseClients) r.end(); server.close(); db.close(); } };
 }
 
 function readBody(req) {
@@ -191,13 +229,10 @@ function serveStatic(p, res) {
 async function main() {
   const env = process.env;
   const dbPath = env.DB_PATH || path.join(ROOT, 'data', 'inbox.db');
-  const app = await createApp({ dbPath, env });
-  const empty = app.db.get('SELECT COUNT(*) AS n FROM messages').n === 0;
   const csvPath = env.BACKLOG_CSV || path.join(ROOT, 'data', 'requests-backlog.csv');
-  if (empty && env.AUTO_IMPORT !== 'false' && fs.existsSync(csvPath)) {
-    const result = await app.triage.importRecords(parseCsv(fs.readFileSync(csvPath, 'utf8')).map(mapColumns));
-    console.log(`[import] ${path.basename(csvPath)}: ${result.created} imported, ${result.duplicate} duplicates, ${result.rejected} rejected`);
-  }
+  const app = await createApp({ dbPath, env, backlogCsv: csvPath });
+  const result = env.AUTO_IMPORT === 'false' ? null : await app.importIfEmpty();
+  if (result) console.log(`[import] ${path.basename(csvPath)}: ${result.created} imported, ${result.duplicate} duplicates, ${result.rejected} rejected`);
   const port = Number(env.PORT || 3000);
   app.server.listen(port, () => {
     console.log(`Inbox Triage running on http://localhost:${port}`);

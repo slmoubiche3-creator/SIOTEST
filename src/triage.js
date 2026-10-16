@@ -2,7 +2,7 @@
 // keeps urgency/SLA up to date, detects incidents and triggers alerts.
 import crypto from 'node:crypto';
 import { parseDate, parseSender } from './parse.js';
-import { CATEGORIES, LOW_ONLY, SLA_HOURS, STATUSES, TEAM_IDS, URGENCIES, maxUrgency, urgencyRank, teamName } from './taxonomy.js';
+import { CATEGORIES, LOW_ONLY, REVIEW_FLAGS, SLA_HOURS, STATUSES, TEAM_IDS, URGENCIES, maxUrgency, urgencyRank, teamName } from './taxonomy.js';
 import { daysUntil } from './analyzer/deadline.js';
 import { redactSecrets } from './redact.js';
 
@@ -35,6 +35,11 @@ export function slaInfo(conv, now) {
   return { state, dueAt: iso(due), minutesLeft: Math.round(left / 60000) };
 }
 
+const isNoise = (conv) => conv.flags.some((f) => f.type === 'spam' || f.type === 'test');
+// "Needs review": a doubt a person should check, not yet marked as checked.
+// Spam and test messages are left out: their details do not matter.
+export const needsReview = (conv) => !conv.reviewed_at && !isNoise(conv) && conv.flags.some((f) => REVIEW_FLAGS.includes(f.type));
+
 export function createTriage({ db, analyzer, notifier, clock, teams, broadcast = () => {} }) {
   const nowIso = () => iso(clock.now());
   const event = (conversationId, actor, type, data = {}) =>
@@ -58,6 +63,9 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
     const flags = [...analysis.flags];
     if (sender.issue === 'missing') flags.push({ type: 'no_sender', label: 'No sender address: we cannot reply' });
     if (sender.issue === 'invalid') flags.push({ type: 'invalid_sender', label: `"${sender.rawAddress}" is not a valid email: we cannot reply` });
+    // A missing time is not a guess; no date at all on a webhook means "now".
+    const guesses = dateNotes.filter((n) => n !== 'no time given' && !n.startsWith('no date given'));
+    if (guesses.length) flags.push({ type: 'date_guessed', label: `Date guessed (${guesses.join(', ')}): written "${input.received_at}"` });
 
     // Re-check after the async analysis: a concurrent request may have stored it.
     if (db.get('SELECT id FROM messages WHERE external_id = ?', externalId)) return { status: 'duplicate', externalId };
@@ -94,6 +102,10 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
         analysis.engine, analysis.engineError ?? null, nowIso(),
       );
       event(conv.id, 'system', 'message_received', { messageId: Number(lastInsertRowid), source: input.source || null });
+      // A new doubtful message sends a checked conversation back to review.
+      if (before && flags.some((f) => REVIEW_FLAGS.includes(f.type))) {
+        db.run('UPDATE conversations SET reviewed_at = NULL, reviewed_by = NULL WHERE id = ?', conv.id);
+      }
       refreshConversation(conv.id);
       return { conv: getConversationRow(conv.id), before, messageId: Number(lastInsertRowid) };
     });
@@ -141,7 +153,7 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
     let urgency = maxUrgency(...msgs.map((m) => m.urgency));
     const unanswered = msgs.filter((m) => m.received_at >= conv.sla_started_at).length;
     if (unanswered >= 2) {
-      flags.push({ type: 'repeat_contact', label: `Customer wrote ${unanswered} times without an answer` });
+      flags.push({ type: 'repeat_contact', count: unanswered, label: `Customer wrote ${unanswered} times without an answer` });
       if (!LOW_ONLY.has(lead.category) && urgencyRank(urgency) < urgencyRank('high')) {
         urgency = 'high';
         reasons.push(`Customer wrote ${unanswered} times without an answer`);
@@ -315,6 +327,10 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
       }
       pending.push(['status_changed', { from: conv.status, to: changes.status }]);
     }
+    if ('reviewed' in changes && Boolean(changes.reviewed) !== Boolean(conv.reviewed_at)) {
+      Object.assign(sets, changes.reviewed ? { reviewed_at: nowIso(), reviewed_by: actor } : { reviewed_at: null, reviewed_by: null });
+      pending.push([changes.reviewed ? 'reviewed' : 'review_reopened', {}]);
+    }
     if (!pending.length) return { conversation: getConversation(id) };
     db.transaction(() => {
       const cols = Object.keys(sets);
@@ -345,6 +361,14 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
     return { conversation: getConversation(id) };
   }
 
+  // Demo reset: removes every conversation, message, alert, incident and
+  // history entry. Settings (AI engine) are kept.
+  function clearAll() {
+    db.transaction(() => {
+      for (const table of ['notifications', 'events', 'messages', 'conversations', 'incidents']) db.run(`DELETE FROM ${table}`);
+    });
+  }
+
   // ---------- reads ----------
 
   function decorate(conv, now = clock.now()) {
@@ -352,6 +376,7 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
       ...conv,
       sla: slaInfo(conv, now),
       deadline_days_left: conv.deadline_at ? daysUntil(conv.deadline_at, now) : null,
+      needs_review: needsReview(conv),
     };
   }
 
@@ -379,6 +404,7 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
     const now = clock.now();
     let list = rows.map((r) => decorate(r, now));
     if (filters.sla === 'overdue') list = list.filter((c) => c.sla.state === 'overdue');
+    if (filters.review) list = list.filter((c) => c.needs_review);
     return list;
   }
 
@@ -396,7 +422,7 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
   function stats() {
     const now = clock.now();
     const open = db.all(`SELECT * FROM conversations WHERE status != 'resolved'`).map((c) => decorate(c, now));
-    const real = open.filter((c) => !c.flags.some((f) => f.type === 'spam' || f.type === 'test'));
+    const real = open.filter((c) => !isNoise(c));
     const byTeam = Object.fromEntries(TEAM_IDS.map((t) => {
       // Includes conversations shared with the team (second topic), like the team view.
       const mine = real.filter((c) => c.team === t || c.secondary_teams.includes(t));
@@ -421,16 +447,19 @@ export function createTriage({ db, analyzer, notifier, clock, teams, broadcast =
       unassigned: real.filter((c) => !c.assignee).length,
       repeatCustomers: real.filter((c) => c.flags.some((f) => f.type === 'repeat_contact')).length,
       deadlinesThisWeek: real.filter((c) => c.deadline_days_left !== null && c.deadline_days_left >= 0 && c.deadline_days_left <= 7).length,
+      needsReview: real.filter((c) => c.needs_review).length,
       noise: open.length - real.length,
       byTeam,
       byAssignee,
       languages,
       routing: { total, rerouted, keptRate: total ? Number(((total - rerouted) / total).toFixed(2)) : null },
-      incidents: db.all(`SELECT * FROM incidents WHERE status = 'open' ORDER BY last_at DESC`),
+      incidents: db.all(`SELECT i.*, (SELECT COUNT(*) FROM conversations c WHERE c.incident_id = i.id) AS conversations,
+          (SELECT COUNT(*) FROM conversations c WHERE c.incident_id = i.id AND c.status != 'resolved') AS open_conversations
+        FROM incidents i WHERE i.status = 'open' ORDER BY i.last_at DESC`),
     };
   }
 
   const listNotifications = (limit = 50) => db.all('SELECT * FROM notifications ORDER BY id DESC LIMIT ?', limit);
 
-  return { ingest, importRecords, updateConversation, addNote, listConversations, getConversation, stats, listNotifications };
+  return { ingest, importRecords, updateConversation, addNote, clearAll, listConversations, getConversation, stats, listNotifications };
 }

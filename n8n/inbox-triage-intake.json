@@ -1,0 +1,216 @@
+{
+  "name": "Inbox Triage – Intake",
+  "nodes": [
+    {
+      "name": "Receive Customer Messages",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        96
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "inbox-triage-intake",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      }
+    },
+    {
+      "name": "Split Into Messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// One item per customer message. Accepts one message (JSON object), a JSON\n// list or {\"messages\": [...]}, {\"csv\": \"...\"}, or a CSV file / text/csv body.\n// Column names are the same as the Inbox Triage CSV import.\nconst FIELDS = {\n  received_at: ['received_at', 'date', 'created_at', 'timestamp', 'received', 'datetime', 'sent_at'],\n  source: ['source', 'channel', 'via', 'origin'],\n  from: ['from', 'sender', 'customer', 'contact'],\n  email: ['email', 'customer_email', 'from_email'],\n  name: ['name', 'customer_name', 'from_name'],\n  subject: ['subject', 'title'],\n  message: ['message', 'body', 'content', 'text', 'description'],\n  external_id: ['id', 'external_id', 'ticket_id', 'reference'],\n};\n\n// CSV with quoted fields, commas and line breaks inside quotes, CRLF, BOM.\nfunction parseCsv(text) {\n  const rows = [];\n  let row = [];\n  let field = '';\n  let inQuotes = false;\n  const src = text.replace(/^﻿/, '');\n  for (let i = 0; i < src.length; i++) {\n    const c = src[i];\n    if (inQuotes) {\n      if (c === '\"' && src[i + 1] === '\"') { field += '\"'; i++; }\n      else if (c === '\"') inQuotes = false;\n      else field += c;\n    } else if (c === '\"') inQuotes = true;\n    else if (c === ',') { row.push(field); field = ''; }\n    else if (c === '\\n' || c === '\\r') {\n      if (c === '\\r' && src[i + 1] === '\\n') i++;\n      row.push(field); field = '';\n      if (row.some((v) => v !== '')) rows.push(row);\n      row = [];\n    } else field += c;\n  }\n  row.push(field);\n  if (row.some((v) => v !== '')) rows.push(row);\n  if (rows.length < 2) return [];\n  const header = rows[0].map((h) => h.trim().toLowerCase());\n  return rows.slice(1).map((r) => Object.fromEntries(header.map((h, i) => [h, (r[i] ?? '').trim()])));\n}\n\nfunction fromText(text) {\n  const t = String(text ?? '').trim();\n  if (!t) return [];\n  if (t.startsWith('{') || t.startsWith('[')) {\n    try { return fromValue(JSON.parse(t)); } catch (err) { /* not JSON: read it as CSV */ }\n  }\n  return parseCsv(t);\n}\n\nfunction fromValue(value) {\n  if (Array.isArray(value)) return value;\n  if (typeof value === 'string') return fromText(value);\n  if (!value || typeof value !== 'object') return [];\n  if (Array.isArray(value.messages)) return value.messages;\n  if (typeof value.csv === 'string') return parseCsv(value.csv);\n  return Object.keys(value).length ? [value] : [];\n}\n\nfunction normalize(record) {\n  if (!record || typeof record !== 'object' || Array.isArray(record)) return {};\n  const lower = Object.fromEntries(Object.entries(record).map(([k, v]) => [k.trim().toLowerCase(), v]));\n  // Email tools often send the sender as { name, address }.\n  if (lower.from && typeof lower.from === 'object') {\n    lower.name = lower.name ?? lower.from.name;\n    lower.email = lower.email ?? lower.from.email ?? lower.from.address;\n    delete lower.from;\n  }\n  const out = {};\n  for (const [field, names] of Object.entries(FIELDS)) {\n    const hit = names.find((n) => lower[n] !== undefined && lower[n] !== null && typeof lower[n] !== 'object' && String(lower[n]).trim() !== '');\n    if (hit) out[field] = String(lower[hit]).trim();\n  }\n  return out;\n}\n\nconst input = $input.first();\nlet records = fromValue(input.json.body);\n// A CSV file or a text/csv body arrives as binary data.\nif (!records.length) {\n  for (const key of Object.keys(input.binary ?? {})) {\n    const buffer = await this.helpers.getBinaryDataBuffer(0, key);\n    records = fromText(buffer.toString('utf8'));\n    if (records.length) break;\n  }\n}\nif (!records.length) {\n  return [{ json: { error: 'No message found. Send one message as JSON, a JSON list, {\"messages\": [...]}, {\"csv\": \"...\"} or a CSV file with a header line.' } }];\n}\nreturn records.map((r) => ({ json: normalize(r) }));\n"
+      }
+    },
+    {
+      "name": "Any Messages?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.error }}",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "name": "Send To Inbox Triage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-inbox-triage.example.com/api/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 0
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "name": "Count Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// One answer for the caller: created, already known (duplicate), rejected\n// (e.g. empty text) or failed (wrong token, tool unreachable), row by row.\nconst results = $input.all().map((item, i) => {\n  const status = item.json.statusCode ?? null;\n  const body = item.json.body && typeof item.json.body === 'object' ? item.json.body : {};\n  const outcome = status === 201 ? 'created'\n    : status === 200 && body.status === 'duplicate' ? 'duplicate'\n      : status === 422 ? 'rejected' : 'failed';\n  const problem = body.error ?? item.json.error?.message ?? item.json.error ?? item.json.statusMessage ?? 'No answer from Inbox Triage';\n  return {\n    row: i + 1,\n    outcome,\n    status,\n    conversationId: body.conversationId ?? null,\n    team: body.analysis?.team ?? null,\n    urgency: body.analysis?.urgency ?? null,\n    error: outcome === 'created' || outcome === 'duplicate' ? null : String(problem),\n  };\n});\nconst count = (outcome) => results.filter((r) => r.outcome === outcome).length;\nreturn [{ json: { received: results.length, created: count('created'), duplicate: count('duplicate'), rejected: count('rejected'), failed: count('failed'), results } }];\n"
+      }
+    },
+    {
+      "name": "Send Summary",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.failed > 0 && $json.created + $json.duplicate === 0 ? 502 : 200 }}"
+        }
+      }
+    },
+    {
+      "name": "Send Input Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Receive Customer Messages": {
+      "main": [
+        [
+          {
+            "node": "Split Into Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Into Messages": {
+      "main": [
+        [
+          {
+            "node": "Any Messages?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Messages?": {
+      "main": [
+        [
+          {
+            "node": "Send To Inbox Triage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Input Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send To Inbox Triage": {
+      "main": [
+        [
+          {
+            "node": "Count Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Results": {
+      "main": [
+        [
+          {
+            "node": "Send Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

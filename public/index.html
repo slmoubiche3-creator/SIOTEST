@@ -24,7 +24,7 @@
         Import CSV<input type="file" id="importInput" accept=".csv,text/csv" hidden>
       </label>
       <button class="btn" id="tourBtn" title="Guided tour of the features">▶ Tour</button>
-      <button class="btn" id="settingsBtn" aria-label="Settings" title="Settings: AI engine">⚙</button>
+      <button class="btn" id="settingsBtn" aria-label="Settings" title="Settings: AI engine, reset demo data">⚙</button>
       <button class="btn" id="alertsBtn" aria-label="Alerts">🔔 <span id="alertsCount">0</span></button>
     </div>
   </header>
@@ -33,6 +33,7 @@
     <nav class="sidebar" id="sidebar" aria-label="Teams">
       <button class="nav-item" data-view="all">All teams <span class="count" id="count-all"></span></button>
       <button class="nav-item" data-view="mine">My queue <span class="count" id="count-mine"></span></button>
+      <button class="nav-item" data-view="review">Needs review <span class="count" id="count-review"></span></button>
       <h3>Teams</h3>
       <div id="teamNav"></div>
       <h3>Open incidents</h3>
@@ -41,6 +42,7 @@
 
     <main class="main">
       <section class="tiles" id="tiles" aria-label="Key numbers"></section>
+      <section class="attention" id="attention" aria-label="Needs attention now" hidden></section>
 
       <section class="filters" aria-label="Filters">
         <input type="search" id="q" placeholder="Search customer, email, text…" aria-label="Search">
@@ -70,6 +72,7 @@
       </section>
 
       <h1 class="view-title" id="viewTitle">All teams</h1>
+      <p class="view-hint muted" id="viewHint" hidden></p>
       <div id="list" class="list" aria-live="polite"></div>
     </main>
   </div>

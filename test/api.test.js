@@ -67,6 +67,15 @@ test('CSV import over HTTP, then team filter and PATCH', async () => {
   assert.equal(note.status, 201);
 });
 
+test('Needs review over HTTP: list it, then mark it as checked', async () => {
+  await call('/api/messages', { method: 'POST', body: { from: 'not-an-email', message: 'Can you move our Kartra funnels?' } });
+  const conv = (await (await call('/api/conversations?review=1')).json()).find((c) => c.flags.some((f) => f.type === 'invalid_sender'));
+  assert.ok(conv);
+  const res = await call(`/api/conversations/${conv.id}`, { method: 'PATCH', body: { actor: 'Inès', reviewed: true } });
+  assert.equal((await res.json()).needs_review, false);
+  assert.ok(!(await (await call('/api/conversations?review=1')).json()).some((c) => c.id === conv.id));
+});
+
 test('static files are served, path traversal is not', async () => {
   const page = await fetch(`${base}/`);
   assert.equal(page.status, 200);
