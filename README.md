@@ -21,6 +21,21 @@ npm run reset      # delete the local database (AI settings too) to start again
 
 Data is kept between visits and restarts in `data/inbox.db` (assignments, statuses, notes, alerts, settings). The CSV is imported only once, when the database is empty: loading or reloading the page never resets anything. To start the demo again, use **Settings (⚙) → Reset demo data**: it asks for confirmation, deletes conversations, messages, alerts, incidents, notes and history, imports `data/requests-backlog.csv` again and keeps the AI settings. `npm run reset` deletes the whole database file instead.
 
+## Where the data is stored
+
+Everything lives in one SQLite database file, `data/inbox.db`, created automatically on the first `npm start` (Node's built-in SQLite: no database server to install). It is kept out of GitHub on purpose (`.gitignore`): it holds customer messages and the AI key.
+
+| Table | What it keeps |
+|---|---|
+| `messages` | Every message received, as written, with its analysis (team, urgency, language, summary, reasons, flags) |
+| `conversations` | Messages from the same customer grouped together, with owner, status, reply timer and deadline |
+| `events` | The history: who assigned, changed the status or the team, added a note, and when |
+| `incidents` | Problems reported by several customers |
+| `notifications` | Every alert sent, to whom, and whether delivery worked |
+| `settings` | The AI engine settings (key, model, n8n URL and secret), never sent back to the browser |
+
+Each new message is compared with the stored ones: the same customer with an open conversation (last 30 days) joins it, the same message already stored is skipped as a duplicate, the same problem from 3 or more customers within 3 hours becomes an incident, and several messages without an answer raise the urgency. Resolved conversations are kept (Status filter → All). The schema is in `src/db.js`; any SQLite viewer (e.g. DB Browser for SQLite) can open the file.
+
 ## What it does
 
 | Step in the brief | What I built |
