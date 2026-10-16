@@ -3,7 +3,6 @@
 ## À faire par l'assistant
 
 ## En attente de l'utilisateur
-- [ ] Supprimer sur GitHub la dernière branche autre que main, qui finit par « systeme-message-triage-tool-vmd9bc » (déjà incluse dans main ; page Branches → icône corbeille) | maintenant | ajouté 2026-10-16
 - [ ] n8n, workflow « Inbox Triage – Intake », nœud « Send To Inbox Triage » : remplacer l'URL d'exemple par l'adresse publique de l'outil (`https://…/api/messages`) | quand l'outil a une adresse publique | ajouté 2026-10-16
 
 ## Conditionnel
