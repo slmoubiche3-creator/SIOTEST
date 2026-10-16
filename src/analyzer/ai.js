@@ -103,13 +103,3 @@ export async function listModels(client) {
   for await (const m of client.models.list()) models.push({ id: m.id, name: m.display_name || m.id, createdAt: m.created_at ?? '' });
   return models.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
-
-// For scripts (`npm run eval`): ANTHROPIC_API_KEY + AI_MODEL from the environment.
-export async function aiEngineFromEnv(env = process.env) {
-  if (env.ANALYZER === 'rules' || !(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN)) return null;
-  if (!env.AI_MODEL) {
-    console.warn('[analyzer] AI engine off: set AI_MODEL to choose a model');
-    return null;
-  }
-  return createAiEngine({ client: await createAnthropicClient(), model: env.AI_MODEL });
-}

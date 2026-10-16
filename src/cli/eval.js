@@ -1,13 +1,15 @@
 // Measures the analyzer against human labels.
 //   npm run eval                      -> backlog (labels in test/fixtures/backlog-expected.json)
 //   npm run eval -- data/holdout.csv  -> any CSV with expected_team / expected_urgency columns
-// Uses the AI engine too when ANTHROPIC_API_KEY and AI_MODEL are set (this costs API credits).
+// Uses the AI engine too when a key and a model are set, in Settings or in
+// the environment (this costs API credits).
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT } from '../config.js';
 import { parseCsv, mapColumns, parseDate } from '../parse.js';
 import { createAnalyzer } from '../analyzer/index.js';
-import { aiEngineFromEnv } from '../analyzer/ai.js';
+import { openDb } from '../db.js';
+import { createAiSettings } from '../ai-settings.js';
 
 const file = process.argv[2] ?? path.join(ROOT, 'data', 'requests-backlog.csv');
 const rows = parseCsv(fs.readFileSync(file, 'utf8'));
@@ -17,7 +19,12 @@ const labels = rows[0]?.expected_team
   : JSON.parse(fs.readFileSync(labelsFile, 'utf8')).rows;
 
 const now = Date.parse(process.env.APP_NOW ?? '2026-10-12T09:00:00Z');
-const analyzer = createAnalyzer({ ai: await aiEngineFromEnv() });
+const analyzer = createAnalyzer();
+// Same key and model as the app (Settings are stored in the database file).
+const dbPath = process.env.DB_PATH || path.join(ROOT, 'data', 'inbox.db');
+const db = openDb(fs.existsSync(dbPath) ? dbPath : ':memory:');
+await createAiSettings({ db, env: process.env, analyzer, clock: { now: () => now } }).apply();
+db.close();
 const score = { team: 0, urgency: 0, language: 0 };
 const misses = [];
 for (const [i, row] of rows.entries()) {

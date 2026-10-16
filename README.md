@@ -103,7 +103,7 @@ The triage logic itself (grouping, deadlines, incidents, guardrails, the agent s
 
 Being direct about the limits:
 
-- **The AI engine has not been run against the live API.** I had no API key in my environment. It is tested with a fake client; the first real step is to add a key in Settings, or run `ANTHROPIC_API_KEY=... AI_MODEL=... npm run eval -- data/holdout.csv`.
+- **The AI engine has not been run against the live API.** I had no API key in my environment. It is tested with a fake client; the first real step is to add a key and a model in Settings, then run `npm run eval -- data/holdout.csv` (it uses the same settings).
 - **Rules miss new phrasing.** The holdout misses: a German "Spam-Ordner", "delete my account and all my data" (GDPR), a charge on a free plan, "I'm not the only one" (wider outage), and a spam offer for "B2B leads".
 - **No login.** The "I am" picker records who did what but is not authentication. In production it would sit behind the company SSO.
 - **Slack not tested against real Slack** (tested against a local fake webhook). No email/chat connectors yet: they would be n8n flows calling the webhook.
